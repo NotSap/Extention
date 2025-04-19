@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Animekai",
+    "lang": "en",
+    "url": "https://animekai.to",
+    "version": 1,
+    "pkg": "animekai",
+    "nsfw": false,
+    "path": "en/animekai/animekai.js"
+  }
+]
