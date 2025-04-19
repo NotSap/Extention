@@ -1,1 +1,23 @@
-[{"name":"AnimeKai","id":274675053,"baseUrl":"https://animekai.to","lang":"en","typeSource":"single","iconUrl":"https://www.google.com/s2/favicons?sz=256&domain=https://animekai.to/","dateFormat":"","dateFormatLocale":"","isNsfw":false,"hasCloudflare":false,"sourceCodeUrl":"https://raw.githubusercontent.com/kodjodevf/mangayomi-extensions/main/javascript/anime/src/en/animekai.js","apiUrl":"","version":"0.2.3","isManga":false,"itemType":1,"isFullData":false,"appMinVerReq":"0.5.0","additionalParams":"","sourceCodeLanguage":1},{"name":"Sudatchi","id":398530136,"baseUrl":"https://sudatchi.com","lang":"en","typeSource":"single","iconUrl":"https://www.google.com/s2/favicons?sz=128&domain=https://sudatchi.com","dateFormat":"","dateFormatLocale":"","isNsfw":false,"hasCloudflare":false,"sourceCodeUrl":"https://raw.githubusercontent.com/kodjodevf/mangayomi-extensions/main/javascript/anime/src/en/sudatchi.js","apiUrl":"","version":"1.1.0","isManga":false,"itemType":1,"isFullData":false,"appMinVerReq":"0.5.0","additionalParams":"","sourceCodeLanguage":1}]
+[
+  {
+    "name": "Animekai",
+    "id": 123456789,
+    "baseUrl": "https://animekai.to",
+    "lang": "en",
+    "typeSource": "single",
+    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animekai.to/",
+    "dateFormat": "",
+    "dateFormatLocale": "",
+    "isNsfw": false,
+    "hasCloudflare": false,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/mangayomi-animekai/main/en/animekai/animekai.js",
+    "apiUrl": "",
+    "version": "1.0.0",
+    "isManga": false,
+    "itemType": 1,
+    "isFullData": false,
+    "appMinVerReq": "0.5.0",
+    "additionalParams": "",
+    "sourceCodeLanguage": 1
+  }
+]
