@@ -16,5 +16,7 @@ function Animekai() {
         thumbnailUrl: el.querySelector('img')?.getAttribute('data-src') || el.querySelector('img')?.src
       }));
     }
-  }
+  };
 }
+
+globalThis.Animekai = Animekai;
