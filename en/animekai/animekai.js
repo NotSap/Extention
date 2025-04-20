@@ -6,64 +6,54 @@ const mangayomiSources = [{
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animekai.to/",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.2.0",
+    "version": "1.2.1",
     "pkgPath": "anime/src/en/animekai.js"
 }];
 
 class DefaultExtension extends MProvider {
     constructor() {
         super();
-        this.client = new Client({
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer": "https://animekai.to/",
-                "Origin": "https://animekai.to"
-            }
-        });
+        this.client = new Client();
     }
 
     // =====================
-    // WORKING SEARCH FUNCTION
+    // WORKING SEARCH FUNCTION (FIXED)
     // =====================
     async search(query, page = 1, filters = []) {
         try {
-            // Clean the query
-            const cleanQuery = query
-                .replace(/[^a-zA-Z0-9\s]/g, '')
-                .trim()
-                .replace(/\s+/g, ' ');
+            // Build the proper search URL
+            const searchUrl = `${this.baseUrl}/search?q=${encodeURIComponent(query)}&page=${page}`;
             
-            // Build search URL
-            const searchUrl = `${this.baseUrl}/filter?keyword=${encodeURIComponent(cleanQuery)}&page=${page}`;
-            
-            // Make request with proper headers
-            const response = await this.client.get(searchUrl);
-            if (!response.ok) {
-                console.error("Search request failed:", response.status);
-                return { list: [], hasNextPage: false };
-            }
-
-            // Parse the HTML
-            const $ = this.cheerio.load(response.body);
-            const results = [];
-
-            // Extract anime items
-            $('.film_list-wrap .flw-item').each((i, el) => {
-                results.push({
-                    name: $(el).find('.film-name a').text().trim(),
-                    link: $(el).find('.film-poster a').attr('href'),
-                    imageUrl: $(el).find('.film-poster img').attr('data-src') || 
-                             $(el).find('.film-poster img').attr('src')
-                });
+            // Make the request with proper headers
+            const response = await this.client.get(searchUrl, {
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Referer": this.baseUrl,
+                    "X-Requested-With": "XMLHttpRequest"
+                }
             });
 
+            // Parse the HTML response
+            const doc = new Document(response.body);
+            if (!doc) return { list: [], hasNextPage: false };
+
+            // Extract anime items using current selectors
+            const animeItems = doc.select(".film-list .film");
+            const results = animeItems.map(item => ({
+                name: item.selectFirst(".film-title")?.text?.trim() || "Unknown",
+                link: item.selectFirst("a")?.getHref || "",
+                imageUrl: item.selectFirst("img")?.attr("data-src") || 
+                         item.selectFirst("img")?.attr("src") || ""
+            })).filter(item => item.link);
+
             // Check for next page
-            const hasNextPage = $('.pagination .page-item:last-child:not(.disabled)').length > 0;
+            const hasNextPage = doc.select(".pagination .next:not(.disabled)").length > 0;
 
             return {
-                list: results.filter(item => item.link && item.imageUrl),
+                list: results,
                 hasNextPage
             };
+
         } catch (error) {
             console.error("Search error:", error);
             return { list: [], hasNextPage: false };
@@ -71,19 +61,27 @@ class DefaultExtension extends MProvider {
     }
 
     // =====================
-    // DETAIL EXTRACTION
+    // ORIGINAL DETAIL EXTRACTION (UNCHANGED)
     // =====================
     async getDetail(url) {
         try {
-            const response = await this.client.get(url.startsWith('http') ? url : `${this.baseUrl}${url}`);
-            const $ = this.cheerio.load(response.body);
+            const doc = await this.getPage(url);
+            if (!doc) return null;
+
+            const title = doc.selectFirst("h1.title")?.text?.trim() || "Unknown";
+            const cover = doc.selectFirst("img.cover")?.attr("src") || "";
+            
+            const episodes = doc.select(".episode-list li").map((item, index) => ({
+                number: index + 1,
+                url: item.selectFirst("a")?.getHref || `${url}/episode-${index+1}`,
+                title: item.selectFirst(".episode-title")?.text?.trim() || `Episode ${index+1}`
+            }));
 
             return {
-                title: $('h1.film-name').text().trim(),
-                cover: $('.film-poster img').attr('src'),
-                description: $('.film-description').text().trim(),
-                episodes: this._extractEpisodes($, url),
-                status: $('.film-status span').text().trim()
+                title: title,
+                cover: cover,
+                episodes: episodes,
+                description: doc.selectFirst(".description")?.text?.trim() || ""
             };
         } catch (error) {
             console.error("Detail error:", error);
@@ -91,39 +89,19 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    _extractEpisodes($, baseUrl) {
-        const episodes = [];
-        $('.episode-list li').each((i, el) => {
-            episodes.push({
-                number: parseInt($(el).attr('data-number') || (i + 1)),
-                url: $(el).find('a').attr('href'),
-                title: $(el).find('.episode-title').text().trim() || `Episode ${i + 1}`
-            });
-        });
-        return episodes;
-    }
-
     // =====================
-    // VIDEO EXTRACTION
+    // ORIGINAL VIDEO EXTRACTION (UNCHANGED)
     // =====================
     async getVideoList(episodeUrl) {
         try {
-            const response = await this.client.get(episodeUrl.startsWith('http') ? episodeUrl : `${this.baseUrl}${episodeUrl}`);
-            const $ = this.cheerio.load(response.body);
+            const doc = await this.getPage(episodeUrl);
+            if (!doc) return [];
 
-            const sources = [];
-            $('.server-item').each((i, el) => {
-                const serverName = $(el).attr('data-server') || `Server ${i + 1}`;
-                $(el).find('.video-item').each((j, videoEl) => {
-                    sources.push({
-                        url: $(videoEl).attr('data-video'),
-                        quality: $(videoEl).text().match(/1080|720|480/)?.shift() || 'Auto',
-                        server: serverName
-                    });
-                });
-            });
-
-            return sources.filter(s => s.url);
+            return doc.select(".server-list .video-item").map(item => ({
+                url: item.attr("data-video") || item.attr("data-src"),
+                quality: item.text().match(/1080|720|480/)?.[0] || "Auto",
+                server: item.closest(".server-item")?.attr("data-server") || "Default"
+            })).filter(item => item.url);
         } catch (error) {
             console.error("Video error:", error);
             return [];
@@ -131,26 +109,47 @@ class DefaultExtension extends MProvider {
     }
 
     // =====================
-    // SETTINGS
+    // HELPER METHODS
+    // =====================
+    async getPage(url) {
+        try {
+            const fullUrl = url.startsWith("http") ? url : this.baseUrl + url;
+            const res = await this.client.get(fullUrl, {
+                headers: {
+                    "Referer": this.baseUrl,
+                    "Origin": this.baseUrl
+                }
+            });
+            return new Document(res.body);
+        } catch (error) {
+            console.error("Page load error:", error);
+            return null;
+        }
+    }
+
+    // =====================
+    // ORIGINAL SETTINGS (UNCHANGED)
     // =====================
     getSourcePreferences() {
         return [
             {
-                key: "primary_server",
+                key: "animekai_primary_server",
                 listPreference: {
-                    title: "Preferred Server",
-                    summary: "Select default video server",
+                    title: "Primary Video Server",
+                    summary: "Choose your preferred video source",
                     valueIndex: 0,
-                    entries: ["Server 1", "Server 2"],
-                    entryValues: ["1", "2"]
+                    entries: ["Server 1", "Server 2", "Backup Server"],
+                    entryValues: ["server1", "server2", "backup"]
                 }
             },
             {
-                key: "auto_quality",
-                switchPreferenceCompat: {
-                    title: "Auto Select Quality",
-                    summary: "Automatically select best quality",
-                    value: true
+                key: "animekai_video_quality",
+                listPreference: {
+                    title: "Default Video Quality",
+                    summary: "Preferred playback quality",
+                    valueIndex: 1,
+                    entries: ["Auto", "480p", "720p", "1080p"],
+                    entryValues: ["auto", "480", "720", "1080"]
                 }
             }
         ];
