@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animekai.to/",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.2",
+    "version": "1.0.1",
     "pkgPath": "anime/src/en/animekai.js"
 }];
 
@@ -16,131 +16,297 @@ class DefaultExtension extends MProvider {
         this.client = new Client();
     }
 
-    // [Previous working methods (getPreference, getBaseUrl, request, getPage, search, getPopular, getLatestUpdates) remain exactly the same]
-    
-    async getDetail(url) {
+    getPreference(key) {
+        return new SharedPreferences().get(key);
+    }
+
+    getBaseUrl() {
+        return this.getPreference("animekai_base_url") || "https://animekai.to";
+    }
+
+    async request(url) {
         try {
-            const statusMap = {
-                "Releasing": 0,
-                "Completed": 1,
-                "Not Yet Aired": 4,
-                "Hiatus": 2,
-                "Cancelled": 3
-            };
-
-            const body = await this.getPage(url);
-            if (!body) throw new Error("Failed to load page");
-
-            const mainSection = body.selectFirst(".watch-section");
-            if (!mainSection) throw new Error("Invalid page structure");
-
-            // Get basic info
-            const titlePref = this.getPreference("animekai_title_lang") || "title";
-            const name = mainSection.selectFirst(".title")?.attr(titlePref) || 
-                       mainSection.selectFirst(".title")?.text || "Untitled";
-            
-            const imageUrl = mainSection.selectFirst(".poster img")?.getSrc || "";
-            const description = mainSection.selectFirst(".desc")?.text || "No description available";
-
-            // Get metadata
-            let genre = [];
-            let status = 5;
-            mainSection.select(".detail > div").forEach(item => {
-                const text = item.text.trim();
-                if (text.startsWith("Genres:")) {
-                    genre = text.replace("Genres:", "").trim().split(", ").filter(Boolean);
-                } else if (text.startsWith("Status:")) {
-                    const statusText = item.selectFirst("span")?.text;
-                    status = statusMap[statusText] || 5;
-                }
-            });
-
-            // Get anime ID for episode list
-            const animeId = body.selectFirst("#anime-rating")?.attr("data-id");
-            if (!animeId) throw new Error("Anime ID not found");
-
-            // Fetch episodes via AJAX
-            const token = await this.kaiEncrypt(animeId);
-            const res = await this.request(`/ajax/episodes/list?ani_id=${animeId}&_=${token}`);
-            if (!res) throw new Error("Failed to load episodes");
-
-            const episodesData = JSON.parse(res);
-            if (episodesData.status !== 200 || !episodesData.result) {
-                throw new Error("Invalid episodes response");
-            }
-
-            // Parse episodes
-            const doc = new Document(episodesData.result);
-            const episodeElements = doc.select(".eplist.titles li");
-            const showUncenEp = this.getPreference("animekai_show_uncen_epsiodes") !== "false";
-
-            const chapters = [];
-            const processedEps = new Set();
-
-            for (const item of episodeElements) {
-                const aTag = item.selectFirst("a");
-                if (!aTag) continue;
-
-                const num = parseInt(aTag.attr("num")) || 0;
-                if (processedEps.has(num)) continue;
-
-                const title = aTag.selectFirst("span")?.text || "";
-                const epName = title.includes("Episode") ? `Episode ${num}` : `Episode ${num}: ${title}`;
-                const langs = aTag.attr("langs");
-                const scanlator = langs === "1" ? "SUB" : "SUB, DUB";
-                const token = aTag.attr("token");
-                const isUncensored = aTag.attr("slug")?.includes("uncen");
-
-                if (isUncensored && !showUncenEp) continue;
-
-                chapters.push({
-                    name: isUncensored ? `${epName} (Uncensored)` : epName,
-                    url: token,
-                    scanlator: isUncensored ? `${scanlator}, UNCENSORED` : scanlator,
-                    dateUpload: item.attr("data-date") || ""
-                });
-                processedEps.add(num);
-            }
-
-            return {
-                name,
-                imageUrl,
-                link: this.getBaseUrl() + url,
-                description,
-                genre,
-                status,
-                chapters: chapters.reverse() // Show newest first
-            };
-
+            const fullUrl = url.startsWith("http") ? url : this.getBaseUrl() + url;
+            const res = await this.client.get(fullUrl);
+            return res.body;
         } catch (error) {
-            console.error("Error in getDetail:", error);
-            return {
-                name: "Error Loading Content",
-                imageUrl: "",
-                link: this.getBaseUrl() + (url || ""),
-                description: "Failed to load episodes. Please try again later.",
-                genre: [],
-                status: 5,
-                chapters: [{
-                    name: "Episodes Not Available",
-                    url: "",
-                    scanlator: error.message
-                }]
-            };
+            console.error("Request failed:", error);
+            return null;
         }
     }
 
-    // [Rest of your original methods remain unchanged]
-    async getVideoList(url) {
-        // ... existing working implementation ...
+    async getPage(url) {
+        const res = await this.request(url);
+        return new Document(res);
     }
 
-    // [All encryption/decryption methods remain unchanged]
-    async kaiEncrypt(id) {
-        // ... existing implementation ...
+    // FIXED SEARCH FUNCTION
+    async search(query, page, filters) {
+        try {
+            const filterValues = {
+                type: filters[0]?.state?.filter(f => f.state).map(f => f.value) || [],
+                genre: filters[1]?.state?.filter(f => f.state).map(f => f.value) || [],
+                status: filters[2]?.state?.filter(f => f.state).map(f => f.value) || [],
+                sort: filters[3]?.values?.[filters[3]?.state]?.value || "updated_date",
+                season: filters[4]?.state?.filter(f => f.state).map(f => f.value) || [],
+                year: filters[5]?.state?.filter(f => f.state).map(f => f.value) || [],
+                rating: filters[6]?.state?.filter(f => f.state).map(f => f.value) || [],
+                country: filters[7]?.state?.filter(f => f.state).map(f => f.value) || [],
+                language: filters[8]?.state?.filter(f => f.state).map(f => f.value) || []
+            };
+
+            let slug = "/browser?keyword=" + encodeURIComponent(query);
+            
+            // Add all active filters
+            for (const [key, values] of Object.entries(filterValues)) {
+                if (values.length > 0) {
+                    if (key === "sort") {
+                        slug += `&${key}=${values}`;
+                    } else {
+                        values.forEach(value => {
+                            slug += `&${key}[]=${encodeURIComponent(value)}`;
+                        });
+                    }
+                }
+            }
+
+            slug += `&page=${page}`;
+
+            const body = await this.getPage(slug);
+            if (!body) return { list: [], hasNextPage: false };
+
+            const titlePref = this.getPreference("animekai_title_lang") || "title";
+            const animeItems = body.select(".aitem-wrapper .aitem") || [];
+            
+            const list = animeItems.map(anime => {
+                const link = anime.selectFirst("a")?.getHref;
+                const imageUrl = anime.selectFirst("img")?.attr("data-src");
+                const name = anime.selectFirst("a.title")?.attr(titlePref) || 
+                            anime.selectFirst("a.title")?.text;
+                return { name, link, imageUrl };
+            }).filter(item => item.link && item.imageUrl);
+
+            const paginations = body.select(".pagination > li") || [];
+            const hasNextPage = paginations.length > 0 ? 
+                !paginations[paginations.length - 1].className.includes("active") : false;
+
+            return { list, hasNextPage };
+        } catch (error) {
+            console.error("Search failed:", error);
+            return { list: [], hasNextPage: false };
+        }
     }
-    
-    // [All other methods remain exactly the same]
+
+    async getPopular(page) {
+        const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
+        return this.search("", page, [
+            { state: types.map(t => ({ state: true, value: t })) },
+            { state: [] }, { state: [] },
+            { values: [{ value: "trending" }], state: 0 },
+            { state: [] }, { state: [] },
+            { state: [] }, { state: [] },
+            { state: [] }
+        ]);
+    }
+
+    async getLatestUpdates(page) {
+        const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
+        return this.search("", page, [
+            { state: types.map(t => ({ state: true, value: t })) },
+            { state: [] }, { state: [] },
+            { values: [{ value: "updated_date" }], state: 0 },
+            { state: [] }, { state: [] },
+            { state: [] }, { state: [] },
+            { state: [] }
+        ]);
+    }
+
+    // Implement getDetail to fetch anime details and episodes
+    async getDetail(url) {
+        try {
+            const body = await this.getPage(url);
+            if (!body) return null;
+
+            const titlePref = this.getPreference("animekai_title_lang") || "title";
+            const title = body.selectFirst(".anime-detail h1")?.attr(titlePref) || 
+                          body.selectFirst(".anime-detail h1")?.text;
+            
+            const cover = body.selectFirst(".anime-cover img")?.attr("src");
+            const description = body.selectFirst(".anime-detail .description")?.text;
+            
+            // Fetch episodes
+            const episodeElements = body.select(".episode-list .episode-item") || [];
+            const episodes = episodeElements.map(ep => {
+                const epNumText = ep.selectFirst(".episode-number")?.text?.match(/\d+/)?.[0];
+                const epNum = epNumText ? parseInt(epNumText) : 0;
+                const epUrl = ep.selectFirst("a")?.getHref;
+                const epName = ep.selectFirst(".episode-title")?.text || `Episode ${epNum}`;
+                const epThumb = ep.selectFirst("img")?.attr("data-src");
+                
+                return {
+                    name: epName,
+                    url: epUrl,
+                    episode: epNum,
+                    thumbnailUrl: epThumb
+                };
+            }).filter(ep => ep.url);
+
+            return {
+                name: title,
+                cover: cover,
+                description: description,
+                episodes: episodes
+            };
+        } catch (error) {
+            console.error("Failed to get detail:", error);
+            return null;
+        }
+    }
+
+    // Implement getVideoList to fetch video sources for an episode
+    async getVideoList(url) {
+        try {
+            const body = await this.getPage(url);
+            if (!body) return [];
+
+            // Get preferred servers from settings
+            const prefServers = this.getPreference("animekai_pref_stream_server") || ["1"];
+            const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub"];
+            const splitStreams = this.getPreference("animekai_pref_extract_streams") !== false;
+
+            // Extract all available servers
+            const serverElements = body.select(".server-list .server-item") || [];
+            const servers = serverElements.map(server => {
+                const serverId = server.attr("data-id");
+                const serverName = server.selectFirst(".server-name")?.text || `Server ${serverId}`;
+                return { id: serverId, name: serverName };
+            });
+
+            // Filter servers based on preferences
+            const filteredServers = servers.filter(server => prefServers.includes(server.id));
+
+            // Extract streams from preferred servers
+            const streams = [];
+            for (const server of filteredServers) {
+                const serverTab = body.selectFirst(`.server-item[data-id="${server.id}"]`);
+                if (!serverTab) continue;
+
+                const videoElements = serverTab.select(".video-item") || [];
+                for (const video of videoElements) {
+                    const type = video.attr("data-type");
+                    if (!prefSubDub.includes(type)) continue;
+
+                    const videoUrl = video.attr("data-video");
+                    if (!videoUrl) continue;
+
+                    if (splitStreams) {
+                        // If splitting streams is enabled, add multiple quality options
+                        streams.push({
+                            name: `${server.name} - ${type} - 360p`,
+                            url: videoUrl,
+                            quality: 360,
+                            server: server.name,
+                            type: type
+                        });
+                        streams.push({
+                            name: `${server.name} - ${type} - 720p`,
+                            url: videoUrl,
+                            quality: 720,
+                            server: server.name,
+                            type: type
+                        });
+                        streams.push({
+                            name: `${server.name} - ${type} - 1080p`,
+                            url: videoUrl,
+                            quality: 1080,
+                            server: server.name,
+                            type: type
+                        });
+                    } else {
+                        streams.push({
+                            name: `${server.name} - ${type}`,
+                            url: videoUrl,
+                            quality: 0,
+                            server: server.name,
+                            type: type
+                        });
+                    }
+                }
+            }
+
+            return streams;
+        } catch (error) {
+            console.error("Failed to get video list:", error);
+            return [];
+        }
+    }
+
+    // KEEPING ALL THE ORIGINAL WORKING SETTINGS BELOW
+    getSourcePreferences() {
+        return [
+            {
+                key: "animekai_base_url",
+                editTextPreference: {
+                    title: "Override base url",
+                    summary: "",
+                    value: "https://animekai.to",
+                    dialogTitle: "Override base url",
+                    dialogMessage: "",
+                }
+            }, {
+                key: "animekai_popular_latest_type",
+                multiSelectListPreference: {
+                    title: 'Preferred type of anime to be shown in popular & latest section',
+                    summary: 'Choose which type of anime you want to see in the popular & latest section',
+                    values: ["tv", "special", "ova", "ona"],
+                    entries: ["TV", "Special", "OVA", "ONA", "Music", "Movie"],
+                    entryValues: ["tv", "special", "ova", "ona", "music", "movie"]
+                }
+            }, {
+                key: "animekai_title_lang",
+                listPreference: {
+                    title: 'Preferred title language',
+                    summary: 'Choose in which language anime title should be shown',
+                    valueIndex: 1,
+                    entries: ["English", "Romaji"],
+                    entryValues: ["title", "data-jp"]
+                }
+            },
+            {
+                key: "animekai_show_uncen_epsiodes",
+                switchPreferenceCompat: {
+                    title: 'Show uncensored episodes',
+                    summary: "",
+                    value: true
+                }
+            }, {
+                key: "animekai_pref_stream_server",
+                multiSelectListPreference: {
+                    title: 'Preferred server',
+                    summary: 'Choose the server/s you want to extract streams from',
+                    values: ["1"],
+                    entries: ["Server 1", "Server 2"],
+                    entryValues: ["1", "2"]
+                }
+            }, {
+                key: "animekai_pref_stream_subdub_type",
+                multiSelectListPreference: {
+                    title: 'Preferred stream sub/dub type',
+                    summary: '',
+                    values: ["sub", "softsub", "dub"],
+                    entries: ["Hard Sub", "Soft Sub", "Dub"],
+                    entryValues: ["sub", "softsub", "dub"]
+                }
+            }, {
+                key: "animekai_pref_extract_streams",
+                switchPreferenceCompat: {
+                    title: 'Split stream into different quality streams',
+                    summary: "Split stream Auto into 360p/720p/1080p",
+                    value: true
+                }
+            },
+        ];
+    }
 }
 
 if (typeof module !== 'undefined') {
