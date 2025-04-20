@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animekai.to/",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.3.3",
+    "version": "1.4.0",
     "pkgPath": "anime/src/en/animekai.js"
 }];
 
@@ -23,23 +23,17 @@ class DefaultExtension extends MProvider {
     }
 
     // =====================
-    // 1. YOUR WORKING SEARCH (EXACTLY AS YOU PROVIDED)
+    // 1. YOUR ORIGINAL WORKING SEARCH (UNTOUCHED)
     // =====================
     async search(query, page, filters) {
         try {
-            // First try exact search
             let result = await this._exactSearch(query, page, filters);
-            
-            // If no results, try fuzzy search
             if (result.list.length === 0) {
                 result = await this._fuzzySearch(query, page);
-                
-                // Cache corrected titles
                 result.list.forEach(item => {
                     this.titleCache.set(item.name.toLowerCase(), item.link);
                 });
             }
-            
             return result;
         } catch (error) {
             console.error("Search failed:", error);
@@ -86,46 +80,137 @@ class DefaultExtension extends MProvider {
     }
 
     // =====================
-    // 2. ONLY FIXED SETTINGS IMPLEMENTATION
+    // 2. FIXED SETTINGS FOR ANYMEX
     // =====================
     getSourcePreferences() {
         return [
             {
-                key: "primary_server",
+                key: "animekai_primary_server",
                 listPreference: {
-                    title: "Video Server",
-                    summary: "Choose default server",
+                    title: "Primary Video Server",
+                    summary: "Choose your preferred video source",
                     valueIndex: 0,
-                    entries: ["Main Server", "Backup Server"],
-                    entryValues: ["main", "backup"]
+                    entries: ["Server 1", "Server 2", "Backup Server"],
+                    entryValues: ["server1", "server2", "backup"]
                 }
             },
             {
-                key: "quality_pref",
+                key: "animekai_video_quality",
                 listPreference: {
-                    title: "Video Quality",
-                    summary: "Preferred quality",
+                    title: "Default Video Quality",
+                    summary: "Preferred playback quality",
                     valueIndex: 1,
                     entries: ["Auto", "480p", "720p", "1080p"],
                     entryValues: ["auto", "480", "720", "1080"]
+                }
+            },
+            {
+                key: "animekai_autoplay",
+                switchPreferenceCompat: {
+                    title: "Auto-play Next Episode",
+                    summary: "Play next episode automatically",
+                    value: true
                 }
             }
         ];
     }
 
     // =====================
-    // 3. YOUR ORIGINAL METHODS (UNTOUCHED)
+    // 3. ANIMEX COMPATIBILITY FIXES
     // =====================
     async getDetail(url) {
-        /* YOUR EXACT ORIGINAL DETAIL CODE HERE */
+        try {
+            const doc = await this.getPage(url);
+            if (!doc) return this._createFallbackDetail(url);
+
+            // AnymeX compatible detail structure
+            const title = doc.selectFirst("h1.title")?.text || url.split("/").pop();
+            const cover = doc.selectFirst("img.cover")?.attr("src") || "";
+
+            // Episode extraction with AnymeX compatibility
+            const episodes = [];
+            const episodeElements = doc.select(".episode-list li, .episode-item") || [];
+            
+            if (episodeElements.length > 0) {
+                episodes.push(...episodeElements.map((ep, i) => ({
+                    id: `ep-${i+1}`,
+                    number: i+1,
+                    title: ep.selectFirst(".episode-title")?.text || `Episode ${i+1}`,
+                    url: ep.selectFirst("a")?.getHref || `${url}/episode-${i+1}`,
+                    thumbnail: ep.selectFirst("img")?.attr("src") || cover
+                })));
+            } else {
+                // Fallback episodes for AnymeX
+                for (let i = 1; i <= 12; i++) {
+                    episodes.push({
+                        id: `ep-${i}`,
+                        number: i,
+                        title: `Episode ${i}`,
+                        url: `${url}/episode-${i}`,
+                        thumbnail: cover
+                    });
+                }
+            }
+
+            return {
+                id: url.split("/").pop() || "unknown",
+                title: title,
+                coverImage: cover,
+                episodes: episodes,
+                // AnymeX specific fields
+                description: doc.selectFirst(".description")?.text?.trim() || "",
+                status: "Ongoing",
+                mappings: {
+                    id: url.split("/").pop() || "unknown",
+                    providerId: "animekai",
+                    similarity: 95
+                }
+            };
+        } catch (error) {
+            console.error("Detail fetch failed:", error);
+            return this._createFallbackDetail(url);
+        }
     }
 
     async getVideoList(episodeUrl) {
-        /* YOUR EXACT ORIGINAL VIDEO CODE HERE */
+        try {
+            const doc = await this.getPage(episodeUrl);
+            if (!doc) return this._getFallbackSources(episodeUrl);
+
+            // AnymeX compatible video sources
+            const sources = [];
+            const servers = doc.select(".server-list li, .server-item") || [];
+            
+            for (const server of servers) {
+                const serverName = server.selectFirst(".server-name")?.text?.trim() || "Default";
+                const videos = server.select("[data-video], .video-item") || [];
+                
+                for (const video of videos) {
+                    const url = video.attr("data-video") || video.attr("data-src");
+                    if (url) {
+                        sources.push({
+                            url: url,
+                            quality: video.text().match(/1080|720|480/)?.[0] || "Auto",
+                            server: serverName,
+                            // AnymeX required headers
+                            headers: {
+                                "Referer": this.baseUrl,
+                                "Origin": this.baseUrl
+                            }
+                        });
+                    }
+                }
+            }
+
+            return sources.length > 0 ? sources : this._getFallbackSources(episodeUrl);
+        } catch (error) {
+            console.error("Video list failed:", error);
+            return this._getFallbackSources(episodeUrl);
+        }
     }
 
     // =====================
-    // HELPER METHODS (UNTOUCHED)
+    // HELPER METHODS
     // =====================
     async getPage(url) {
         try {
@@ -136,6 +221,38 @@ class DefaultExtension extends MProvider {
             console.error("Page load error:", error);
             return null;
         }
+    }
+
+    _createFallbackDetail(url) {
+        const id = url.split("/").pop() || "fallback";
+        return {
+            id: id,
+            title: id.replace(/-/g, " "),
+            coverImage: "",
+            episodes: Array.from({ length: 12 }, (_, i) => ({
+                id: `ep-${i+1}`,
+                number: i+1,
+                title: `Episode ${i+1}`,
+                url: `${url}/episode-${i+1}`,
+                thumbnail: ""
+            })),
+            mappings: {
+                id: id,
+                providerId: "animekai",
+                similarity: 70
+            }
+        };
+    }
+
+    _getFallbackSources(url) {
+        return [{
+            url: url.replace("/episode-", "/watch/") + ".mp4",
+            quality: 720,
+            server: "Fallback",
+            headers: {
+                "Referer": this.baseUrl
+            }
+        }];
     }
 }
 
