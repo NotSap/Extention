@@ -40,7 +40,7 @@ class DefaultExtension extends MProvider {
         return new Document(res);
     }
 
-    // KEEP ORIGINAL SEARCH FUNCTION EXACTLY AS IS
+    // ORIGINAL WORKING SEARCH FUNCTION (UNTOUCHED)
     async search(query, page, filters) {
         try {
             const filterValues = {
@@ -57,7 +57,6 @@ class DefaultExtension extends MProvider {
 
             let slug = "/browser?keyword=" + encodeURIComponent(query);
             
-            // Add all active filters
             for (const [key, values] of Object.entries(filterValues)) {
                 if (values.length > 0) {
                     if (key === "sort") {
@@ -97,7 +96,7 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // KEEP ORIGINAL POPULAR FUNCTION
+    // ORIGINAL WORKING POPULAR FUNCTION (UNTOUCHED)
     async getPopular(page) {
         const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
         return this.search("", page, [
@@ -110,7 +109,7 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // KEEP ORIGINAL LATEST UPDATES FUNCTION
+    // ORIGINAL WORKING LATEST UPDATES FUNCTION (UNTOUCHED)
     async getLatestUpdates(page) {
         const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
         return this.search("", page, [
@@ -123,7 +122,7 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // NEW IMPLEMENTATION - GET DETAILS AND EPISODES
+    // NEW EPISODE FETCHING IMPLEMENTATION
     async getDetail(url) {
         try {
             const body = await this.getPage(url);
@@ -131,19 +130,37 @@ class DefaultExtension extends MProvider {
 
             const titlePref = this.getPreference("animekai_title_lang") || "title";
             const title = body.selectFirst(".anime-detail h1")?.attr(titlePref) || 
-                          body.selectFirst(".anime-detail h1")?.text;
+                        body.selectFirst(".anime-detail h1")?.text;
             
             const cover = body.selectFirst(".anime-cover img")?.attr("src");
             const description = body.selectFirst(".anime-detail .description")?.text;
             
-            // Fetch episodes
-            const episodeElements = body.select(".episode-list .episode-item") || [];
-            const episodes = episodeElements.map(ep => {
-                const epNumText = ep.selectFirst(".episode-number")?.text?.match(/\d+/)?.[0];
-                const epNum = epNumText ? parseInt(epNumText) : 0;
-                const epUrl = ep.selectFirst("a")?.getHref;
-                const epName = ep.selectFirst(".episode-title")?.text || `Episode ${epNum}`;
-                const epThumb = ep.selectFirst("img")?.attr("data-src");
+            // Try multiple episode container selectors
+            let episodeElements = [];
+            const possibleSelectors = [
+                ".episode-list .episode-item",
+                ".episodes-container .episode",
+                ".eplister ul li",
+                ".list-episode-item"
+            ];
+            
+            for (const selector of possibleSelectors) {
+                episodeElements = body.select(selector);
+                if (episodeElements.length > 0) break;
+            }
+
+            const episodes = episodeElements.map((ep, index) => {
+                const epNumText = ep.selectFirst(".episode-number, .number")?.text?.match(/\d+/)?.[0] || 
+                                ep.attr("data-number") || 
+                                (index + 1);
+                const epNum = parseInt(epNumText);
+                const epUrl = ep.selectFirst("a")?.getHref || 
+                            `${url}/episode/${epNum}`;
+                const epName = ep.selectFirst(".episode-title, .title")?.text || 
+                             `Episode ${epNum}`;
+                const epThumb = ep.selectFirst("img")?.attr("src") || 
+                               ep.selectFirst("img")?.attr("data-src") || 
+                               cover;
                 
                 return {
                     name: epName,
@@ -165,73 +182,61 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // NEW IMPLEMENTATION - GET VIDEO SOURCES
+    // NEW VIDEO SOURCES IMPLEMENTATION
     async getVideoList(url) {
         try {
             const body = await this.getPage(url);
             if (!body) return [];
 
-            // Get preferred servers from settings (without modifying original settings)
             const prefServers = this.getPreference("animekai_pref_stream_server") || ["1"];
             const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub"];
             const splitStreams = this.getPreference("animekai_pref_extract_streams") !== false;
 
-            // Extract all available servers
-            const serverElements = body.select(".server-list .server-item") || [];
+            // Try multiple server container selectors
+            let serverElements = [];
+            const possibleServerSelectors = [
+                ".server-list .server-item",
+                ".servers-list .server",
+                ".server-tab"
+            ];
+            
+            for (const selector of possibleServerSelectors) {
+                serverElements = body.select(selector);
+                if (serverElements.length > 0) break;
+            }
+
             const servers = serverElements.map(server => {
-                const serverId = server.attr("data-id");
+                const serverId = server.attr("data-id") || 
+                               server.attr("id") || 
+                               server.selectFirst(".server-name")?.text?.toLowerCase().replace(/\s+/g, '-');
                 const serverName = server.selectFirst(".server-name")?.text || `Server ${serverId}`;
                 return { id: serverId, name: serverName };
             });
 
-            // Filter servers based on preferences
             const filteredServers = servers.filter(server => prefServers.includes(server.id));
 
-            // Extract streams from preferred servers
             const streams = [];
             for (const server of filteredServers) {
-                const serverTab = body.selectFirst(`.server-item[data-id="${server.id}"]`);
-                if (!serverTab) continue;
+                const serverContent = body.selectFirst(`.server-item[data-id="${server.id}"], #${server.id}`);
+                if (!serverContent) continue;
 
-                const videoElements = serverTab.select(".video-item") || [];
+                const videoElements = serverContent.select(".video-item, .mirror_item") || [];
                 for (const video of videoElements) {
-                    const type = video.attr("data-type");
+                    const type = video.attr("data-type") || 
+                               video.selectFirst(".type")?.text?.toLowerCase() || 
+                               "sub";
                     if (!prefSubDub.includes(type)) continue;
 
-                    const videoUrl = video.attr("data-video");
+                    const videoUrl = video.attr("data-video") || 
+                                   video.selectFirst("a")?.getHref;
                     if (!videoUrl) continue;
 
                     if (splitStreams) {
-                        // If splitting streams is enabled, add multiple quality options
-                        streams.push({
-                            name: `${server.name} - ${type} - 360p`,
-                            url: videoUrl,
-                            quality: 360,
-                            server: server.name,
-                            type: type
-                        });
-                        streams.push({
-                            name: `${server.name} - ${type} - 720p`,
-                            url: videoUrl,
-                            quality: 720,
-                            server: server.name,
-                            type: type
-                        });
-                        streams.push({
-                            name: `${server.name} - ${type} - 1080p`,
-                            url: videoUrl,
-                            quality: 1080,
-                            server: server.name,
-                            type: type
-                        });
+                        streams.push({ name: `${server.name} - ${type} - 360p`, url: videoUrl, quality: 360 });
+                        streams.push({ name: `${server.name} - ${type} - 720p`, url: videoUrl, quality: 720 });
+                        streams.push({ name: `${server.name} - ${type} - 1080p`, url: videoUrl, quality: 1080 });
                     } else {
-                        streams.push({
-                            name: `${server.name} - ${type}`,
-                            url: videoUrl,
-                            quality: 0,
-                            server: server.name,
-                            type: type
-                        });
+                        streams.push({ name: `${server.name} - ${type}`, url: videoUrl, quality: 0 });
                     }
                 }
             }
@@ -243,7 +248,7 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // KEEP ORIGINAL SETTINGS EXACTLY AS IS
+    // ORIGINAL WORKING SETTINGS (UNTOUCHED)
     getSourcePreferences() {
         return [
             {
