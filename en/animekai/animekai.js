@@ -40,7 +40,6 @@ class DefaultExtension extends MProvider {
         return new Document(res);
     }
 
-    // WORKING SEARCH FUNCTION (ORIGINAL VERSION)
     async search(query, page, filters) {
         try {
             const filterValues = {
@@ -56,7 +55,7 @@ class DefaultExtension extends MProvider {
             };
 
             let slug = "/browser?keyword=" + encodeURIComponent(query);
-            
+
             for (const [key, values] of Object.entries(filterValues)) {
                 if (values.length > 0) {
                     if (key === "sort") {
@@ -76,7 +75,7 @@ class DefaultExtension extends MProvider {
 
             const titlePref = this.getPreference("animekai_title_lang") || "title";
             const animeItems = body.select(".aitem-wrapper .aitem") || [];
-            
+
             const list = animeItems.map(anime => {
                 const link = anime.selectFirst("a")?.getHref;
                 const imageUrl = anime.selectFirst("img")?.attr("data-src");
@@ -120,7 +119,7 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // IMPROVED EPISODE FETCHING
+    // FIXED EPISODE FETCHING
     async getDetail(url) {
         try {
             const doc = await this.getPage(url);
@@ -128,41 +127,40 @@ class DefaultExtension extends MProvider {
 
             const titlePref = this.getPreference("animekai_title_lang") || "title";
             const title = doc.selectFirst("h1.title, .anime-detail h1")?.attr(titlePref) || 
-                        doc.selectFirst("h1.title, .anime-detail h1")?.text;
-            
+                          doc.selectFirst("h1.title, .anime-detail h1")?.text;
+
             const cover = doc.selectFirst("img.cover, .anime-cover img")?.attr("src");
             const description = doc.selectFirst(".description, .anime-synopsis")?.text;
 
-            // Multiple selector patterns for episode detection
-            const episodeContainers = [
-                ".episode-list",
-                ".episodes-wrapper",
-                ".eplister"
-            ].map(selector => doc.selectFirst(selector)).filter(Boolean);
-
+            const episodeWrappers = doc.select(".eplister, .episodes-wrapper, .episode-list");
             let episodes = [];
-            for (const container of episodeContainers) {
-                const items = container.select(".episode-item, li");
-                episodes = items.map((item, index) => {
-                    const epNum = parseInt(
-                        item.attr("data-number") || 
-                        item.selectFirst(".episode-number")?.text?.match(/\d+/)?.[0] || 
-                        (index + 1)
-                    );
-                    const epUrl = item.selectFirst("a")?.getHref || `${url}/episode/${epNum}`;
-                    const epName = item.selectFirst(".episode-title")?.text || `Episode ${epNum}`;
-                    const epThumb = item.selectFirst("img")?.attr("src") || 
-                                   item.selectFirst("img")?.attr("data-src") || 
-                                   cover;
 
-                    return {
-                        name: epName,
+            for (const wrapper of episodeWrappers) {
+                const items = wrapper.select("li, .episode-item");
+                for (const item of items) {
+                    const linkElement = item.selectFirst("a");
+                    if (!linkElement) continue;
+
+                    const epUrl = linkElement.getHref;
+                    const epTitle = linkElement.selectFirst(".title")?.text?.trim() ||
+                                    linkElement.text?.trim() ||
+                                    `Episode`;
+
+                    const epNumMatch = epTitle.match(/Episode\s?(\d+)/i);
+                    const epNum = epNumMatch ? parseInt(epNumMatch[1]) : parseInt(item.attr("data-number")) || episodes.length + 1;
+
+                    const epThumb = item.selectFirst("img")?.attr("src") ||
+                                    item.selectFirst("img")?.attr("data-src") || 
+                                    cover;
+
+                    episodes.push({
+                        name: epTitle,
                         url: epUrl,
                         episode: epNum,
                         thumbnailUrl: epThumb
-                    };
-                }).filter(ep => ep.url);
-                
+                    });
+                }
+
                 if (episodes.length > 0) break;
             }
 
@@ -178,7 +176,6 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // IMPROVED VIDEO SOURCE EXTRACTION WITH DUB SUPPORT
     async getVideoList(url) {
         try {
             const doc = await this.getPage(url);
@@ -188,7 +185,6 @@ class DefaultExtension extends MProvider {
             const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub"];
             const splitStreams = this.getPreference("animekai_pref_extract_streams") !== false;
 
-            // Multiple selector patterns for server detection
             const serverContainers = [
                 ".server-list",
                 ".servers-tab",
@@ -202,7 +198,7 @@ class DefaultExtension extends MProvider {
                     name: server.selectFirst(".server-name")?.text?.trim() || "Default",
                     element: server
                 })).filter(s => s.id);
-                
+
                 if (servers.length > 0) break;
             }
 
@@ -216,7 +212,7 @@ class DefaultExtension extends MProvider {
                     const videoUrl = video.attr("data-video") || 
                                    video.attr("data-src") || 
                                    video.selectFirst("iframe")?.attr("src");
-                    
+
                     if (videoUrl) {
                         if (splitStreams) {
                             [360, 720, 1080].forEach(quality => {
@@ -251,7 +247,6 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // SETTINGS WITH ADDED DUB OPTION (ORIGINAL + DUB)
     getSourcePreferences() {
         return [
             {
@@ -303,8 +298,8 @@ class DefaultExtension extends MProvider {
                 multiSelectListPreference: {
                     title: 'Preferred stream sub/dub type',
                     summary: '',
-                    values: ["sub", "dub"], // Added dub option
-                    entries: ["Sub", "Dub"], // Simplified options
+                    values: ["sub", "dub"],
+                    entries: ["Sub", "Dub"],
                     entryValues: ["sub", "dub"]
                 }
             }, {
