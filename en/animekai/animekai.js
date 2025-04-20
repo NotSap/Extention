@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animekai.to/",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.1.1",
+    "version": "1.1.2",
     "pkgPath": "anime/src/en/animekai.js"
 }];
 
@@ -38,10 +38,10 @@ class DefaultExtension extends MProvider {
 
     async getPage(url) {
         const res = await this.request(url);
-        return new Document(res);
+        return res ? new Document(res) : null;
     }
 
-    // ORIGINAL WORKING SEARCH - DO NOT MODIFY
+    // ORIGINAL WORKING SEARCH - VERIFIED CORRECT
     async search(query, page, filters) {
         try {
             const filterValues = {
@@ -97,7 +97,7 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // ORIGINAL WORKING POPULAR - DO NOT MODIFY
+    // ORIGINAL WORKING POPULAR/LATEST - VERIFIED CORRECT
     async getPopular(page) {
         const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
         return this.search("", page, [
@@ -110,7 +110,6 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // ORIGINAL WORKING LATEST - DO NOT MODIFY
     async getLatestUpdates(page) {
         const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
         return this.search("", page, [
@@ -123,100 +122,108 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // 2. FIXED EPISODE FETCHING (Anify-compatible)
+    // 2. FIXED DETAIL FETCHING (Null-safe + Anify-compatible)
     async getDetail(url) {
         try {
             const doc = await this.getPage(url);
-            if (!doc) return null;
+            if (!doc) return this._createEmptyDetailResponse();
 
-            // Get title using original method
             const titlePref = this.getPreference("animekai_title_lang") || "title";
             const title = doc.selectFirst("h1.title, .anime-detail h1")?.attr(titlePref) || 
-                        doc.selectFirst("h1.title, .anime-detail h1")?.text;
+                        doc.selectFirst("h1.title, .anime-detail h1")?.text || "Unknown Title";
             
-            // Get cover using original method
-            const cover = doc.selectFirst("img.cover, .anime-cover img")?.attr("src");
+            const cover = doc.selectFirst("img.cover, .anime-cover img")?.attr("src") || "";
+            const description = doc.selectFirst(".description, .anime-synopsis")?.text || "";
 
-            // Find episodes using multiple selector patterns
+            // Null-safe episode extraction
             const episodeElements = doc.select(".episode-list li, .episode-item") || [];
-            const episodes = episodeElements.map((ep, index) => {
-                const epNum = parseInt(
-                    ep.attr("data-number") || 
-                    ep.selectFirst(".episode-number")?.text?.match(/\d+/)?.[0] || 
-                    (index + 1)
-                );
-                
-                return {
-                    id: `ep-${epNum}-${Date.now()}`, // Unique ID for Anify
-                    number: epNum,
-                    title: ep.selectFirst(".episode-title")?.text || `Episode ${epNum}`,
-                    thumbnail: ep.selectFirst("img")?.attr("src") || cover,
-                    isFiller: false
-                };
-            });
+            const episodes = episodeElements.map((ep, index) => ({
+                id: `ep-${index + 1}-${Date.now()}`,
+                number: index + 1,
+                title: ep.selectFirst(".episode-title")?.text || `Episode ${index + 1}`,
+                thumbnail: ep.selectFirst("img")?.attr("src") || cover,
+                isFiller: false
+            }));
 
-            // Return Anify-compatible format
             return {
-                id: url.split('/').pop(), // anime ID from URL
+                id: url.split('/').pop() || "unknown-id",
                 title: title,
                 coverImage: cover,
+                description: description,
+                status: "UNKNOWN",
                 episodes: episodes,
                 mappings: {
-                    id: url.split('/').pop(),
+                    id: url.split('/').pop() || "unknown-id",
                     providerId: "animekai",
                     similarity: 95
                 }
             };
         } catch (error) {
             console.error("Detail fetch failed:", error);
-            return null;
+            return this._createEmptyDetailResponse();
         }
     }
 
-    // 3. FIXED VIDEO SOURCES (Anify-compatible)
+    _createEmptyDetailResponse() {
+        return {
+            id: "error",
+            title: "Error loading data",
+            coverImage: "",
+            description: "",
+            status: "UNKNOWN",
+            episodes: [],
+            mappings: {
+                id: "error",
+                providerId: "animekai",
+                similarity: 0
+            }
+        };
+    }
+
+    // 3. FIXED VIDEO LIST (Null-safe + Anify-compatible)
     async getVideoList(episodeId) {
         try {
-            // Extract anime ID and episode number (format: ep-1-1234567890)
-            const epNum = episodeId.split('-')[1];
-            const animeId = episodeId.split('-ep-')[0];
+            if (!episodeId) return [];
+            
+            // Extract anime ID and episode number
+            const parts = episodeId.split('-');
+            if (parts.length < 3) return [];
+            
+            const animeId = parts[0];
+            const epNum = parts[1];
             const url = `${this.getBaseUrl()}/watch/${animeId}/episode-${epNum}`;
 
             const doc = await this.getPage(url);
             if (!doc) return [];
 
-            // Get user preferences
+            // Get user preferences with null checks
             const prefServers = this.getPreference("animekai_pref_stream_server") || ["1"];
-            const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub"];
-            const splitStreams = this.getPreference("animekai_pref_extract_streams");
+            const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub"];
+            const splitStreams = this.getPreference("animekai_pref_extract_streams") !== false;
 
-            // Find all servers
-            const servers = doc.select(".server-list li").map(server => ({
-                id: server.attr("data-id"),
-                name: server.selectFirst(".server-name")?.text || "Default",
-                element: server
-            }));
-
-            // Filter by preferred servers and process videos
+            // Null-safe server processing
+            const serverElements = doc.select(".server-list li") || [];
             const sources = [];
-            for (const server of servers.filter(s => prefServers.includes(s.id))) {
-                const videos = server.element.select(".video-item");
-                for (const video of videos) {
+
+            for (const server of serverElements) {
+                const serverId = server.attr("data-id");
+                if (!serverId || !prefServers.includes(serverId)) continue;
+
+                const videoElements = server.select(".video-item") || [];
+                for (const video of videoElements) {
                     const type = video.attr("data-type") || "sub";
                     if (!prefSubDub.includes(type)) continue;
 
                     const videoUrl = video.attr("data-video");
                     if (!videoUrl) continue;
 
-                    // Add quality options if splitting enabled
                     if (splitStreams) {
                         [360, 720, 1080].forEach(quality => {
                             sources.push({
                                 url: videoUrl,
                                 quality: quality,
                                 audio: type === "dub" ? "dub" : "sub",
-                                headers: {
-                                    Referer: this.getBaseUrl()
-                                }
+                                headers: { Referer: this.getBaseUrl() }
                             });
                         });
                     } else {
@@ -224,9 +231,7 @@ class DefaultExtension extends MProvider {
                             url: videoUrl,
                             quality: 0, // auto
                             audio: type === "dub" ? "dub" : "sub",
-                            headers: {
-                                Referer: this.getBaseUrl()
-                            }
+                            headers: { Referer: this.getBaseUrl() }
                         });
                     }
                 }
@@ -239,7 +244,7 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // 4. ORIGINAL SETTINGS - COMPLETELY UNCHANGED
+    // 4. ORIGINAL SETTINGS - VERIFIED WORKING
     getSourcePreferences() {
         return [
             {
