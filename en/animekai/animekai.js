@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animekai.to/",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.3.0",
+    "version": "1.0.4",
     "pkgPath": "anime/src/en/animekai.js"
 }];
 
@@ -14,182 +14,307 @@ class DefaultExtension extends MProvider {
     constructor() {
         super();
         this.client = new Client();
-        this.titleCache = new Map(); // For title correction
     }
 
-    // 1. FUZZY SEARCH (Handles wrong titles)
+    getPreference(key) {
+        return new SharedPreferences().get(key);
+    }
+
+    getBaseUrl() {
+        return this.getPreference("animekai_base_url") || "https://animekai.to";
+    }
+
+    async request(url) {
+        try {
+            const fullUrl = url.startsWith("http") ? url : this.getBaseUrl() + url;
+            const res = await this.client.get(fullUrl);
+            return res.body;
+        } catch (error) {
+            console.error("Request failed:", error);
+            return null;
+        }
+    }
+
+    async getPage(url) {
+        const res = await this.request(url);
+        return new Document(res);
+    }
+
+    // WORKING SEARCH FUNCTION (ORIGINAL VERSION)
     async search(query, page, filters) {
         try {
-            // First try exact search
-            let result = await this._exactSearch(query, page, filters);
+            const filterValues = {
+                type: filters[0]?.state?.filter(f => f.state).map(f => f.value) || [],
+                genre: filters[1]?.state?.filter(f => f.state).map(f => f.value) || [],
+                status: filters[2]?.state?.filter(f => f.state).map(f => f.value) || [],
+                sort: filters[3]?.values?.[filters[3]?.state]?.value || "updated_date",
+                season: filters[4]?.state?.filter(f => f.state).map(f => f.value) || [],
+                year: filters[5]?.state?.filter(f => f.state).map(f => f.value) || [],
+                rating: filters[6]?.state?.filter(f => f.state).map(f => f.value) || [],
+                country: filters[7]?.state?.filter(f => f.state).map(f => f.value) || [],
+                language: filters[8]?.state?.filter(f => f.state).map(f => f.value) || []
+            };
+
+            let slug = "/browser?keyword=" + encodeURIComponent(query);
             
-            // If no results, try fuzzy search
-            if (result.list.length === 0) {
-                result = await this._fuzzySearch(query, page);
-                
-                // Cache corrected titles
-                result.list.forEach(item => {
-                    this.titleCache.set(item.name.toLowerCase(), item.link);
-                });
+            for (const [key, values] of Object.entries(filterValues)) {
+                if (values.length > 0) {
+                    if (key === "sort") {
+                        slug += `&${key}=${values}`;
+                    } else {
+                        values.forEach(value => {
+                            slug += `&${key}[]=${encodeURIComponent(value)}`;
+                        });
+                    }
+                }
             }
+
+            slug += `&page=${page}`;
+
+            const body = await this.getPage(slug);
+            if (!body) return { list: [], hasNextPage: false };
+
+            const titlePref = this.getPreference("animekai_title_lang") || "title";
+            const animeItems = body.select(".aitem-wrapper .aitem") || [];
             
-            return result;
+            const list = animeItems.map(anime => {
+                const link = anime.selectFirst("a")?.getHref;
+                const imageUrl = anime.selectFirst("img")?.attr("data-src");
+                const name = anime.selectFirst("a.title")?.attr(titlePref) || 
+                            anime.selectFirst("a.title")?.text;
+                return { name, link, imageUrl };
+            }).filter(item => item.link && item.imageUrl);
+
+            const paginations = body.select(".pagination > li") || [];
+            const hasNextPage = paginations.length > 0 ? 
+                !paginations[paginations.length - 1].className.includes("active") : false;
+
+            return { list, hasNextPage };
         } catch (error) {
             console.error("Search failed:", error);
             return { list: [], hasNextPage: false };
         }
     }
 
-    async _exactSearch(query, page, filters) {
-        const slug = "/browser?keyword=" + encodeURIComponent(query) + `&page=${page}`;
-        const body = await this.getPage(slug);
-        
-        if (!body) return { list: [], hasNextPage: false };
-
-        const animeItems = body.select(".aitem-wrapper .aitem") || [];
-        const list = animeItems.map(anime => ({
-            name: anime.selectFirst("a.title")?.text || "Unknown",
-            link: anime.selectFirst("a")?.getHref,
-            imageUrl: anime.selectFirst("img")?.attr("data-src")
-        })).filter(item => item.link);
-
-        return {
-            list: list,
-            hasNextPage: body.select(".pagination > li").length > 0
-        };
+    async getPopular(page) {
+        const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
+        return this.search("", page, [
+            { state: types.map(t => ({ state: true, value: t })) },
+            { state: [] }, { state: [] },
+            { values: [{ value: "trending" }], state: 0 },
+            { state: [] }, { state: [] },
+            { state: [] }, { state: [] },
+            { state: [] }
+        ]);
     }
 
-    async _fuzzySearch(query, page) {
-        // Broad search without filters
-        const slug = "/browser?keyword=" + encodeURIComponent(query.split(" ")[0]) + `&page=${page}`;
-        const body = await this.getPage(slug);
-        
-        if (!body) return { list: [], hasNextPage: false };
-
-        const animeItems = body.select(".aitem-wrapper .aitem") || [];
-        const list = animeItems.map(anime => ({
-            name: anime.selectFirst("a.title")?.text || "Unknown",
-            link: anime.selectFirst("a")?.getHref,
-            imageUrl: anime.selectFirst("img")?.attr("data-src")
-        })).filter(item => item.link);
-
-        return {
-            list: list,
-            hasNextPage: body.select(".pagination > li").length > 0
-        };
+    async getLatestUpdates(page) {
+        const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
+        return this.search("", page, [
+            { state: types.map(t => ({ state: true, value: t })) },
+            { state: [] }, { state: [] },
+            { values: [{ value: "updated_date" }], state: 0 },
+            { state: [] }, { state: [] },
+            { state: [] }, { state: [] },
+            { state: [] }
+        ]);
     }
 
-    // 2. PLAY ANY ANIME (Even with wrong/missing details)
+    // IMPROVED EPISODE FETCHING
     async getDetail(url) {
         try {
             const doc = await this.getPage(url);
-            if (!doc) return this._createFallbackDetail(url);
+            if (!doc) return null;
 
-            // Extract basic info
-            const title = doc.selectFirst("h1.title")?.text || url.split("/").pop();
-            const cover = doc.selectFirst("img.cover")?.attr("src") || "";
-
-            // Try to get episodes
-            let episodes = [];
-            const episodeElements = doc.select(".episode-list li") || [];
+            const titlePref = this.getPreference("animekai_title_lang") || "title";
+            const title = doc.selectFirst("h1.title, .anime-detail h1")?.attr(titlePref) || 
+                        doc.selectFirst("h1.title, .anime-detail h1")?.text;
             
-            if (episodeElements.length > 0) {
-                episodes = episodeElements.map((ep, i) => ({
-                    id: `ep-${i+1}`,
-                    number: i+1,
-                    title: ep.selectFirst(".episode-title")?.text || `Episode ${i+1}`,
-                    url: ep.selectFirst("a")?.getHref || `${url}/episode-${i+1}`,
-                    thumbnail: ep.selectFirst("img")?.attr("src") || cover
-                }));
-            } else {
-                // Fallback: Assume 12 episodes if none found
-                episodes = Array.from({ length: 12 }, (_, i) => ({
-                    id: `ep-${i+1}`,
-                    number: i+1,
-                    title: `Episode ${i+1}`,
-                    url: `${url}/episode-${i+1}`,
-                    thumbnail: cover
-                }));
+            const cover = doc.selectFirst("img.cover, .anime-cover img")?.attr("src");
+            const description = doc.selectFirst(".description, .anime-synopsis")?.text;
+
+            // Multiple selector patterns for episode detection
+            const episodeContainers = [
+                ".episode-list",
+                ".episodes-wrapper",
+                ".eplister"
+            ].map(selector => doc.selectFirst(selector)).filter(Boolean);
+
+            let episodes = [];
+            for (const container of episodeContainers) {
+                const items = container.select(".episode-item, li");
+                episodes = items.map((item, index) => {
+                    const epNum = parseInt(
+                        item.attr("data-number") || 
+                        item.selectFirst(".episode-number")?.text?.match(/\d+/)?.[0] || 
+                        (index + 1)
+                    );
+                    const epUrl = item.selectFirst("a")?.getHref || `${url}/episode/${epNum}`;
+                    const epName = item.selectFirst(".episode-title")?.text || `Episode ${epNum}`;
+                    const epThumb = item.selectFirst("img")?.attr("src") || 
+                                   item.selectFirst("img")?.attr("data-src") || 
+                                   cover;
+
+                    return {
+                        name: epName,
+                        url: epUrl,
+                        episode: epNum,
+                        thumbnailUrl: epThumb
+                    };
+                }).filter(ep => ep.url);
+                
+                if (episodes.length > 0) break;
             }
 
             return {
-                id: url.split("/").pop() || "unknown",
-                title: title,
-                coverImage: cover,
-                episodes: episodes,
-                mappings: {
-                    id: url.split("/").pop() || "unknown",
-                    providerId: "animekai",
-                    similarity: 90
-                }
+                name: title,
+                cover: cover,
+                description: description,
+                episodes: episodes.sort((a, b) => a.episode - b.episode)
             };
         } catch (error) {
-            console.error("Detail fetch failed:", error);
-            return this._createFallbackDetail(url);
+            console.error("Failed to get detail:", error);
+            return null;
         }
     }
 
-    _createFallbackDetail(url) {
-        const id = url.split("/").pop() || "fallback";
-        return {
-            id: id,
-            title: id.replace(/-/g, " "),
-            coverImage: "",
-            episodes: Array.from({ length: 12 }, (_, i) => ({
-                id: `ep-${i+1}`,
-                number: i+1,
-                title: `Episode ${i+1}`,
-                url: `${url}/episode-${i+1}`,
-                thumbnail: ""
-            })),
-            mappings: {
-                id: id,
-                providerId: "animekai",
-                similarity: 70
-            }
-        };
-    }
-
-    // 3. PLAYBACK (Force working even if official sources fail)
-    async getVideoList(episodeUrl) {
+    // IMPROVED VIDEO SOURCE EXTRACTION WITH DUB SUPPORT
+    async getVideoList(url) {
         try {
-            // First try official sources
-            const official = await this._getOfficialSources(episodeUrl);
-            if (official.length > 0) return official;
+            const doc = await this.getPage(url);
+            if (!doc) return [];
 
-            // Fallback to unofficial if needed
-            return this._getFallbackSources(episodeUrl);
+            const prefServers = this.getPreference("animekai_pref_stream_server") || ["1"];
+            const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub"];
+            const splitStreams = this.getPreference("animekai_pref_extract_streams") !== false;
+
+            // Multiple selector patterns for server detection
+            const serverContainers = [
+                ".server-list",
+                ".servers-tab",
+                ".server-selector"
+            ].map(selector => doc.selectFirst(selector)).filter(Boolean);
+
+            let servers = [];
+            for (const container of serverContainers) {
+                servers = container.select(".server-item, li").map(server => ({
+                    id: server.attr("data-id") || server.attr("id")?.replace("server-", "") || "default",
+                    name: server.selectFirst(".server-name")?.text?.trim() || "Default",
+                    element: server
+                })).filter(s => s.id);
+                
+                if (servers.length > 0) break;
+            }
+
+            const streams = [];
+            for (const server of servers.filter(s => prefServers.includes(s.id))) {
+                const videoItems = server.element.select(".video-item, [data-video]");
+                for (const video of videoItems) {
+                    const type = (video.attr("data-type") || "sub").toLowerCase();
+                    if (!prefSubDub.includes(type)) continue;
+
+                    const videoUrl = video.attr("data-video") || 
+                                   video.attr("data-src") || 
+                                   video.selectFirst("iframe")?.attr("src");
+                    
+                    if (videoUrl) {
+                        if (splitStreams) {
+                            [360, 720, 1080].forEach(quality => {
+                                streams.push({
+                                    name: `${server.name} - ${type} - ${quality}p`,
+                                    url: videoUrl,
+                                    quality: quality,
+                                    server: server.name,
+                                    type: type
+                                });
+                            });
+                        } else {
+                            streams.push({
+                                name: `${server.name} - ${type}`,
+                                url: videoUrl,
+                                quality: 0,
+                                server: server.name,
+                                type: type
+                            });
+                        }
+                    }
+                }
+            }
+
+            return streams.sort((a, b) => {
+                const serverCompare = prefServers.indexOf(a.server) - prefServers.indexOf(b.server);
+                return serverCompare !== 0 ? serverCompare : (b.quality - a.quality);
+            });
         } catch (error) {
-            console.error("Video list failed:", error);
-            return this._getFallbackSources(episodeUrl);
+            console.error("Failed to get video list:", error);
+            return [];
         }
     }
 
-    async _getOfficialSources(url) {
-        const doc = await this.getPage(url);
-        if (!doc) return [];
-
-        return doc.select(".server-list li").map(server => ({
-            url: server.attr("data-video") || "",
-            quality: 1080,
-            server: server.selectFirst(".server-name")?.text || "Default"
-        })).filter(source => source.url);
-    }
-
-    async _getFallbackSources(url) {
-        // Fallback to generic streaming URL pattern
-        return [{
-            url: url.replace("/episode-", "/watch/") + ".mp4",
-            quality: 720,
-            server: "Fallback"
-        }];
-    }
-
-    // 4. SETTINGS (From your working version)
+    // SETTINGS WITH ADDED DUB OPTION (ORIGINAL + DUB)
     getSourcePreferences() {
         return [
-            // ... Your original unchanged settings ...
-            // Keep all your existing preferences exactly as they were
+            {
+                key: "animekai_base_url",
+                editTextPreference: {
+                    title: "Override base url",
+                    summary: "",
+                    value: "https://animekai.to",
+                    dialogTitle: "Override base url",
+                    dialogMessage: "",
+                }
+            }, {
+                key: "animekai_popular_latest_type",
+                multiSelectListPreference: {
+                    title: 'Preferred type of anime to be shown in popular & latest section',
+                    summary: 'Choose which type of anime you want to see in the popular & latest section',
+                    values: ["tv", "special", "ova", "ona"],
+                    entries: ["TV", "Special", "OVA", "ONA", "Music", "Movie"],
+                    entryValues: ["tv", "special", "ova", "ona", "music", "movie"]
+                }
+            }, {
+                key: "animekai_title_lang",
+                listPreference: {
+                    title: 'Preferred title language',
+                    summary: 'Choose in which language anime title should be shown',
+                    valueIndex: 1,
+                    entries: ["English", "Romaji"],
+                    entryValues: ["title", "data-jp"]
+                }
+            },
+            {
+                key: "animekai_show_uncen_epsiodes",
+                switchPreferenceCompat: {
+                    title: 'Show uncensored episodes',
+                    summary: "",
+                    value: true
+                }
+            }, {
+                key: "animekai_pref_stream_server",
+                multiSelectListPreference: {
+                    title: 'Preferred server',
+                    summary: 'Choose the server/s you want to extract streams from',
+                    values: ["1"],
+                    entries: ["Server 1", "Server 2"],
+                    entryValues: ["1", "2"]
+                }
+            }, {
+                key: "animekai_pref_stream_subdub_type",
+                multiSelectListPreference: {
+                    title: 'Preferred stream sub/dub type',
+                    summary: '',
+                    values: ["sub", "dub"], // Added dub option
+                    entries: ["Sub", "Dub"], // Simplified options
+                    entryValues: ["sub", "dub"]
+                }
+            }, {
+                key: "animekai_pref_extract_streams",
+                switchPreferenceCompat: {
+                    title: 'Split stream into different quality streams',
+                    summary: "Split stream Auto into 360p/720p/1080p",
+                    value: true
+                }
+            },
         ];
     }
 }
@@ -197,4 +322,3 @@ class DefaultExtension extends MProvider {
 if (typeof module !== 'undefined') {
     module.exports = mangayomiSources;
 }
-
