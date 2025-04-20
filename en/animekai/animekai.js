@@ -11,7 +11,7 @@ const mangayomiSources = [{
     "hasCloudflare": false,
     "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/mangayomi-animekai/main/en/animekai/animekai.js",
     "apiUrl": "",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "isManga": false,
     "itemType": 1,
     "isFullData": false,
@@ -28,7 +28,8 @@ class AnimeKaiExtension extends MProvider {
     }
 
     getPreference(key) {
-        return new SharedPreferences().get(key) || "";
+        const pref = new SharedPreferences().get(key);
+        return pref !== undefined ? pref : "";
     }
 
     getBaseUrl() {
@@ -51,6 +52,10 @@ class AnimeKaiExtension extends MProvider {
                 ...options
             });
 
+            if (!res || !res.body) {
+                throw new Error("Empty response");
+            }
+
             this.cache.set(cacheKey, res.body);
             return res.body;
         } catch (error) {
@@ -60,124 +65,154 @@ class AnimeKaiExtension extends MProvider {
     }
 
     async getPage(url) {
-        const content = await this.request(url);
-        return content ? new Document(content) : null;
+        try {
+            const content = await this.request(url);
+            if (!content) {
+                throw new Error("No content received");
+            }
+            return new Document(content);
+        } catch (error) {
+            console.error("Failed to load page:", error);
+            return null;
+        }
     }
 
-    async searchPage({ 
-        query = "", 
-        type = [], 
-        genre = [], 
-        status = [], 
-        sort = "updated_date", 
-        season = [], 
-        year = [], 
-        rating = [], 
-        country = [], 
-        language = [], 
-        page = 1 
-    } = {}) {
-        
+    async searchPage(params = {}) {
+        const {
+            query = "",
+            type = [],
+            genre = [],
+            status = [],
+            sort = "updated_date",
+            season = [],
+            year = [],
+            rating = [],
+            country = [],
+            language = [],
+            page = 1
+        } = params;
+
         function bundleParams(category, items) {
             return items.map(item => `&${category}[]=${encodeURIComponent(item)}`).join("");
         }
 
-        let slug = "/browser?keyword=" + encodeURIComponent(query);
-        slug += bundleParams("type", type);
-        slug += bundleParams("genre", genre);
-        slug += bundleParams("status", status);
-        slug += bundleParams("season", season);
-        slug += bundleParams("year", year);
-        slug += bundleParams("rating", rating);
-        slug += bundleParams("country", country);
-        slug += bundleParams("language", language);
-        slug += `&sort=${sort}&page=${page}`;
+        try {
+            let slug = "/browser?keyword=" + encodeURIComponent(query);
+            slug += bundleParams("type", type);
+            slug += bundleParams("genre", genre);
+            slug += bundleParams("status", status);
+            slug += bundleParams("season", season);
+            slug += bundleParams("year", year);
+            slug += bundleParams("rating", rating);
+            slug += bundleParams("country", country);
+            slug += bundleParams("language", language);
+            slug += `&sort=${sort}&page=${page}`;
 
-        const body = await this.getPage(slug);
-        if (!body) {
+            const body = await this.getPage(slug);
+            if (!body) {
+                return {
+                    list: [{
+                        name: "Nothing Found",
+                        link: "",
+                        imageUrl: "",
+                        description: "Try different search terms"
+                    }],
+                    hasNextPage: false
+                };
+            }
+
+            const paginations = body.select(".pagination > li");
+            const hasNextPage = paginations.length > 0 
+                ? !paginations.last().className.includes("active") 
+                : false;
+
+            const titlePref = this.getPreference("animekai_title_lang") || "title";
+            const animeItems = body.select(".aitem-wrapper .aitem");
+            const list = animeItems.map(anime => {
+                const titleElement = anime.selectFirst(`a.title`);
+                return {
+                    name: titleElement?.attr(titlePref) || titleElement?.text || "Untitled",
+                    link: anime.selectFirst("a")?.getHref || "",
+                    imageUrl: anime.selectFirst("img")?.attr("data-src") || "",
+                    description: anime.selectFirst(".desc")?.text?.substring(0, 100) + "..." || ""
+                };
+            }).filter(item => item.link && item.imageUrl);
+
+            return { list, hasNextPage };
+        } catch (error) {
+            console.error("Search failed:", error);
             return {
                 list: [{
-                    name: "Nothing Found",
+                    name: "Search Temporarily Unavailable",
                     link: "",
                     imageUrl: "",
-                    description: "Try different search terms"
+                    description: "Please try again later"
                 }],
                 hasNextPage: false
             };
         }
+    }
 
-        const paginations = body.select(".pagination > li");
-        const hasNextPage = paginations.length > 0 
-            ? !paginations.last().className.includes("active") 
-            : false;
+    async getPopular(page = 1) {
+        try {
+            const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
+            return await this.searchPage({ 
+                sort: "trending", 
+                type: Array.isArray(types) ? types : [types], 
+                page 
+            });
+        } catch (error) {
+            console.error("Failed to get popular:", error);
+            return { list: [], hasNextPage: false };
+        }
+    }
 
-        const titlePref = this.getPreference("animekai_title_lang") || "title";
-        const animeItems = body.select(".aitem-wrapper .aitem");
-        const list = animeItems.map(anime => {
-            const titleElement = anime.selectFirst(`a.title`);
-            return {
-                name: titleElement?.attr(titlePref) || titleElement?.text || "Untitled",
-                link: anime.selectFirst("a")?.getHref || "",
-                imageUrl: anime.selectFirst("img")?.attr("data-src") || "",
-                description: anime.selectFirst(".desc")?.text?.substring(0, 100) + "..." || ""
+    async getLatestUpdates(page = 1) {
+        try {
+            const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
+            return await this.searchPage({ 
+                sort: "updated_date", 
+                type: Array.isArray(types) ? types : [types], 
+                page 
+            });
+        } catch (error) {
+            console.error("Failed to get latest updates:", error);
+            return { list: [], hasNextPage: false };
+        }
+    }
+
+    async search(query = "", page = 1, filters = []) {
+        try {
+            const getActiveFilters = (filter) => {
+                if (!filter || !Array.isArray(filter.state)) return [];
+                return filter.state
+                    .filter(f => f && f.state)
+                    .map(f => f.value)
+                    .filter(Boolean);
             };
-        });
 
-        return { list, hasNextPage };
-    }
+            // Ensure filters array has all required entries
+            while (filters.length < 9) {
+                filters.push({ state: [] });
+            }
 
-    async getPopular(page) {
-        const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
-        return this.searchPage({ 
-            sort: "trending", 
-            type: Array.isArray(types) ? types : [types], 
-            page 
-        });
-    }
-
-    async getLatestUpdates(page) {
-        const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
-        return this.searchPage({ 
-            sort: "updated_date", 
-            type: Array.isArray(types) ? types : [types], 
-            page 
-        });
-    }
-
-    async search(query, page, filters) {
-        const getActiveFilters = (filter) => {
-            if (!filter || !filter.state) return [];
-            return filter.state
-                .filter(f => f && f.state)
-                .map(f => f.value)
-                .filter(Boolean);
-        };
-
-        filters = filters || [
-            { state: [] }, // type
-            { state: [] }, // genre
-            { state: [] }, // status
-            { values: [], state: 0 }, // sort
-            { state: [] }, // season
-            { state: [] }, // year
-            { state: [] }, // rating
-            { state: [] }, // country
-            { state: [] }  // language
-        ];
-
-        return this.searchPage({
-            query,
-            page,
-            type: getActiveFilters(filters[0]),
-            genre: getActiveFilters(filters[1]),
-            status: getActiveFilters(filters[2]),
-            sort: (filters[3]?.values?.[filters[3]?.state]?.value) || "updated_date",
-            season: getActiveFilters(filters[4]),
-            year: getActiveFilters(filters[5]),
-            rating: getActiveFilters(filters[6]),
-            country: getActiveFilters(filters[7]),
-            language: getActiveFilters(filters[8])
-        });
+            return await this.searchPage({
+                query,
+                page,
+                type: getActiveFilters(filters[0]),
+                genre: getActiveFilters(filters[1]),
+                status: getActiveFilters(filters[2]),
+                sort: (filters[3]?.values?.[filters[3]?.state]?.value) || "updated_date",
+                season: getActiveFilters(filters[4]),
+                year: getActiveFilters(filters[5]),
+                rating: getActiveFilters(filters[6]),
+                country: getActiveFilters(filters[7]),
+                language: getActiveFilters(filters[8])
+            });
+        } catch (error) {
+            console.error("Search error:", error);
+            return { list: [], hasNextPage: false };
+        }
     }
 
     async getDetail(url) {
@@ -283,14 +318,14 @@ class AnimeKaiExtension extends MProvider {
             return {
                 name: "Error Loading Content",
                 imageUrl: "",
-                link: this.getBaseUrl() + url,
+                link: this.getBaseUrl() + (url || ""),
                 description: "Please try again later",
                 genre: [],
                 status: 5,
                 chapters: [{
                     name: "Failed to load episodes",
                     url: "",
-                    scanlator: error.message
+                    scanlator: error.message.substring(0, 50)
                 }]
             };
         }
@@ -298,13 +333,13 @@ class AnimeKaiExtension extends MProvider {
 
     async getVideoList(url) {
         try {
-            if (!url || url.includes("media not found")) {
-                throw new Error("Media not found");
+            if (!url || typeof url !== "string") {
+                throw new Error("Invalid URL");
             }
 
             const streams = [];
-            const prefServer = this.getPreference("animekai_pref_stream_server")?.split(",") || ["1"];
-            const prefDubType = this.getPreference("animekai_pref_stream_subdub_type")?.split(",") || ["sub"];
+            const prefServer = (this.getPreference("animekai_pref_stream_server") || "1").split(",");
+            const prefDubType = (this.getPreference("animekai_pref_stream_subdub_type") || "sub").split(",");
             const epSlugs = url.split("||");
 
             for (let i = 0; i < epSlugs.length; i++) {
@@ -366,7 +401,7 @@ class AnimeKaiExtension extends MProvider {
             console.error("Error in getVideoList:", error);
             return [{
                 url: "",
-                quality: "Error: " + error.message,
+                quality: "Error: " + error.message.substring(0, 50),
                 originalUrl: "",
                 subtitles: []
             }];
@@ -560,10 +595,10 @@ class AnimeKaiExtension extends MProvider {
 
     formatSubtitles(subtitles, dubType) {
         return (subtitles || []).filter(sub => 
-            !sub.kind?.includes("thumbnail")
+            sub && sub.file && !sub.kind?.includes("thumbnail")
         ).map(sub => ({
             file: sub.file,
-            label: `${sub.label} - ${dubType}`
+            label: `${sub.label || 'Sub'} - ${dubType}`
         }));
     }
 
@@ -609,11 +644,11 @@ class AnimeKaiExtension extends MProvider {
     async getMegaUrl(vidId) {
         if (!vidId) return null;
 
-        const token = await this.kaiEncrypt(vidId);
-        const res = await this.request(`/ajax/links/view?id=${vidId}&_=${token}`);
-        if (!res) return null;
-
         try {
+            const token = await this.kaiEncrypt(vidId);
+            const res = await this.request(`/ajax/links/view?id=${vidId}&_=${token}`);
+            if (!res) return null;
+
             const body = JSON.parse(res);
             if (body.status !== 200 || !body.result) return null;
 
@@ -647,7 +682,7 @@ class AnimeKaiExtension extends MProvider {
 
             if (streams[0]) {
                 streams[0].subtitles = this.formatSubtitles(
-                    streamData.tracks, 
+                    streamData.tracks || [], 
                     dubType
                 );
             }
