@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animekai.to/",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.5",
+    "version": "1.0.6",
     "pkgPath": "anime/src/en/animekai.js"
 }];
 
@@ -17,79 +17,86 @@ class DefaultExtension extends MProvider {
     }
 
     // =====================
-    // 1. WORKING SEARCH (ORIGINAL)
+    // 1. FIXED SEARCH FUNCTION
     // =====================
-    async search(query, page, filters) {
+    async search(query, page = 1, filters = []) {
         try {
-            const filterValues = {
-                type: filters[0]?.state?.filter(f => f.state).map(f => f.value) || [],
-                genre: filters[1]?.state?.filter(f => f.state).map(f => f.value) || [],
-                status: filters[2]?.state?.filter(f => f.state).map(f => f.value) || [],
-                sort: filters[3]?.values?.[filters[3]?.state]?.value || "updated_date",
-                season: filters[4]?.state?.filter(f => f.state).map(f => f.value) || [],
-                year: filters[5]?.state?.filter(f => f.state).map(f => f.value) || [],
-                rating: filters[6]?.state?.filter(f => f.state).map(f => f.value) || [],
-                country: filters[7]?.state?.filter(f => f.state).map(f => f.value) || [],
-                language: filters[8]?.state?.filter(f => f.state).map(f => f.value) || []
+            // Build search URL with proper encoding
+            const searchUrl = `${this.baseUrl}/browser?keyword=${encodeURIComponent(query)}&page=${page}`;
+            
+            // Add headers to mimic browser request
+            const headers = {
+                "Referer": this.baseUrl,
+                "Origin": this.baseUrl,
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             };
 
-            let slug = "/browser?keyword=" + encodeURIComponent(query);
-            
-            for (const [key, values] of Object.entries(filterValues)) {
-                if (values.length > 0) {
-                    if (key === "sort") {
-                        slug += `&${key}=${values}`;
-                    } else {
-                        values.forEach(value => {
-                            slug += `&${key}[]=${encodeURIComponent(value)}`;
-                        });
-                    }
-                }
+            // Make the request
+            const response = await this.client.get(searchUrl, { headers });
+            if (!response.ok) {
+                console.error("Search request failed:", response.status);
+                return { list: [], hasNextPage: false };
             }
 
-            slug += `&page=${page}`;
+            // Parse the HTML
+            const doc = new Document(response.body);
+            if (!doc) return { list: [], hasNextPage: false };
 
-            const body = await this.getPage(slug);
-            if (!body) return { list: [], hasNextPage: false };
-
-            const titlePref = this.getPreference("animekai_title_lang") || "title";
-            const animeItems = body.select(".aitem-wrapper .aitem") || [];
+            // Extract anime items - updated selectors
+            const animeItems = doc.select(".film_list-wrap .flw-item, .aitem-wrapper .aitem") || [];
             
-            const list = animeItems.map(anime => {
-                const link = anime.selectFirst("a")?.getHref;
-                const imageUrl = anime.selectFirst("img")?.attr("data-src");
-                const name = anime.selectFirst("a.title")?.attr(titlePref) || 
-                            anime.selectFirst("a.title")?.text;
-                return { name, link, imageUrl };
+            const list = animeItems.map(item => {
+                const titleElement = item.selectFirst(".film-name a, a.title");
+                const imageElement = item.selectFirst(".film-poster img, img.film-poster-img");
+                
+                return {
+                    name: titleElement?.text?.trim() || "Unknown Title",
+                    link: titleElement?.getHref || "",
+                    imageUrl: imageElement?.attr("data-src") || 
+                             imageElement?.attr("src") || 
+                             ""
+                };
             }).filter(item => item.link && item.imageUrl);
 
-            const paginations = body.select(".pagination > li") || [];
-            const hasNextPage = paginations.length > 0 ? 
-                !paginations[paginations.length - 1].className.includes("active") : false;
+            // Check for next page
+            const pagination = doc.select(".pagination li a, .page-item a");
+            const hasNextPage = pagination.some(item => 
+                item.text?.includes("Next") || item.text?.includes(">")
+            );
 
-            return { list, hasNextPage };
+            return { 
+                list: list, 
+                hasNextPage: hasNextPage 
+            };
         } catch (error) {
-            console.error("Search failed:", error);
+            console.error("Search error:", error);
             return { list: [], hasNextPage: false };
         }
     }
 
     // =====================
-    // 2. IMPROVED DETAIL EXTRACTION
+    // 2. DETAIL EXTRACTION
     // =====================
     async getDetail(url) {
         try {
             const doc = await this.getPage(url);
             if (!doc) return null;
 
-            const titlePref = this.getPreference("animekai_title_lang") || "title";
-            const title = doc.selectFirst("h1.title")?.attr(titlePref) || 
-                        doc.selectFirst("h1.title")?.text;
-            
-            const cover = doc.selectFirst("img.cover")?.attr("src");
-            const description = doc.selectFirst(".description")?.text;
+            // Title with multiple fallbacks
+            const title = doc.selectFirst("h1.title")?.text?.trim() || 
+                         doc.selectFirst(".anime-detail h1")?.text?.trim() || 
+                         "Unknown Title";
 
-            // Enhanced episode detection
+            // Cover image with fallbacks
+            const cover = doc.selectFirst(".anime-cover img")?.attr("src") || 
+                        doc.selectFirst("img.cover")?.attr("src") || 
+                        "";
+
+            // Description
+            const description = doc.selectFirst(".description")?.text?.trim() || 
+                              "No description available";
+
+            // Episodes
             const episodeItems = doc.select(".episode-list li, .eplist li") || [];
             const episodes = episodeItems.map((item, index) => {
                 const epNum = parseInt(
@@ -97,8 +104,9 @@ class DefaultExtension extends MProvider {
                     item.selectFirst(".episode-num")?.text?.match(/\d+/)?.[0] || 
                     (index + 1)
                 );
+                
                 return {
-                    name: item.selectFirst(".episode-title")?.text || `Episode ${epNum}`,
+                    name: item.selectFirst(".episode-title")?.text?.trim() || `Episode ${epNum}`,
                     url: item.selectFirst("a")?.getHref || `${url}/episode/${epNum}`,
                     episode: epNum,
                     thumbnailUrl: item.selectFirst("img")?.attr("src") || cover
@@ -112,47 +120,48 @@ class DefaultExtension extends MProvider {
                 episodes: episodes.sort((a, b) => a.episode - b.episode)
             };
         } catch (error) {
-            console.error("Failed to get detail:", error);
+            console.error("Detail extraction error:", error);
             return null;
         }
     }
 
     // =====================
-    // 3. RELIABLE VIDEO EXTRACTION
+    // 3. VIDEO EXTRACTION
     // =====================
-    async getVideoList(url) {
+    async getVideoList(episodeUrl) {
         try {
-            const doc = await this.getPage(url);
+            const doc = await this.getPage(episodeUrl);
             if (!doc) return [];
 
+            // Get user preferences
             const prefServer = this.getPreference("animekai_pref_stream_server") || "1";
             const showUncensored = this.getPreference("animekai_show_uncen_epsiodes") !== false;
 
-            // Find active server tab
-            const server = doc.selectFirst(`.server-tab[data-server="${prefServer}"], 
-                                         .server-item[data-id="${prefServer}"]`);
+            // Find the preferred server
+            const server = doc.selectFirst(`.server-list li[data-server="${prefServer}"], 
+                                          .server-tab[data-id="${prefServer}"]`);
             if (!server) return [];
 
-            // Extract all video options
-            const videos = server.select(".video-item, [data-video]") || [];
-            return videos.map(video => {
-                const isUncensored = video.text?.includes("Uncensored");
+            // Extract video sources
+            const videoSources = server.select("[data-video], .video-item") || [];
+            return videoSources.map(source => {
+                const isUncensored = source.text?.includes("Uncensored");
                 if (isUncensored && !showUncensored) return null;
 
                 return {
-                    name: video.selectFirst(".video-name")?.text || "Default",
-                    url: video.attr("data-video") || video.attr("data-src"),
-                    quality: video.text?.match(/1080|720|480/)?.shift() || "Auto"
+                    name: source.selectFirst(".video-name")?.text?.trim() || "Source",
+                    url: source.attr("data-video") || source.attr("data-src"),
+                    quality: source.text?.match(/1080|720|480/)?.[0] || "Auto"
                 };
             }).filter(Boolean);
         } catch (error) {
-            console.error("Failed to get video list:", error);
+            console.error("Video extraction error:", error);
             return [];
         }
     }
 
     // =====================
-    // 4. ORIGINAL SETTINGS (UNCHANGED)
+    // 4. SETTINGS (UNCHANGED)
     // =====================
     getSourcePreferences() {
         return [
@@ -208,7 +217,8 @@ class DefaultExtension extends MProvider {
             const res = await this.client.get(fullUrl, {
                 headers: {
                     "Referer": this.baseUrl,
-                    "Origin": this.baseUrl
+                    "Origin": this.baseUrl,
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
                 }
             });
             return new Document(res.body);
