@@ -145,8 +145,27 @@ class DefaultExtension extends MProvider {
     }
 
     async search(query, page, filters) {
-        const getActiveFilters = filter => 
-            filter.state.filter(f => f.state).map(f => f.value);
+        // Safe filter handling
+        const getActiveFilters = (filter) => {
+            if (!filter || !filter.state) return [];
+            return filter.state
+                .filter(f => f && f.state)
+                .map(f => f.value)
+                .filter(Boolean);
+        };
+
+        // Default empty filters if none provided
+        filters = filters || [
+            { state: [] }, // type
+            { state: [] }, // genre
+            { state: [] }, // status
+            { values: [], state: 0 }, // sort
+            { state: [] }, // season
+            { state: [] }, // year
+            { state: [] }, // rating
+            { state: [] }, // country
+            { state: [] }  // language
+        ];
 
         return this.searchPage({
             query,
@@ -154,7 +173,7 @@ class DefaultExtension extends MProvider {
             type: getActiveFilters(filters[0]),
             genre: getActiveFilters(filters[1]),
             status: getActiveFilters(filters[2]),
-            sort: filters[3].values[filters[3].state].value,
+            sort: (filters[3]?.values?.[filters[3]?.state]?.value) || "updated_date",
             season: getActiveFilters(filters[4]),
             year: getActiveFilters(filters[5]),
             rating: getActiveFilters(filters[6]),
@@ -784,7 +803,7 @@ class DefaultExtension extends MProvider {
             w = (w + 1) % 256;
             sum = (sum + v[w]) % 256;
             [v[w], v[sum]] = [v[sum], v[w]];
-            f.push(String.fromCharCode(text.charCodeAt(a) ^ v[(v[w] + v[sum]) % 256]));
+            f.push(String.fromCharCode(text.charCodeAt(a) ^ v[(v[w] + v[sum]) % 256]);
             a++;
         }
         return f.join('');
