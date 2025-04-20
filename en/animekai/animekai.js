@@ -40,7 +40,7 @@ class DefaultExtension extends MProvider {
         return new Document(res);
     }
 
-    // FIXED SEARCH FUNCTION
+    // KEEP ORIGINAL SEARCH FUNCTION EXACTLY AS IS
     async search(query, page, filters) {
         try {
             const filterValues = {
@@ -97,6 +97,7 @@ class DefaultExtension extends MProvider {
         }
     }
 
+    // KEEP ORIGINAL POPULAR FUNCTION
     async getPopular(page) {
         const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
         return this.search("", page, [
@@ -109,6 +110,7 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
+    // KEEP ORIGINAL LATEST UPDATES FUNCTION
     async getLatestUpdates(page) {
         const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
         return this.search("", page, [
@@ -121,7 +123,7 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // Implement getDetail to fetch anime details and episodes
+    // NEW IMPLEMENTATION - GET DETAILS AND EPISODES
     async getDetail(url) {
         try {
             const body = await this.getPage(url);
@@ -163,13 +165,13 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // Implement getVideoList to fetch video sources for an episode
+    // NEW IMPLEMENTATION - GET VIDEO SOURCES
     async getVideoList(url) {
         try {
             const body = await this.getPage(url);
             if (!body) return [];
 
-            // Get preferred servers from settings
+            // Get preferred servers from settings (without modifying original settings)
             const prefServers = this.getPreference("animekai_pref_stream_server") || ["1"];
             const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub"];
             const splitStreams = this.getPreference("animekai_pref_extract_streams") !== false;
@@ -241,7 +243,7 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // KEEPING ALL THE ORIGINAL WORKING SETTINGS BELOW
+    // KEEP ORIGINAL SETTINGS EXACTLY AS IS
     getSourcePreferences() {
         return [
             {
