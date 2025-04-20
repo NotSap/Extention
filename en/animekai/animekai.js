@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animekai.to/",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.6",
+    "version": "1.0.7",
     "pkgPath": "anime/src/en/animekai.js"
 }];
 
@@ -17,101 +17,134 @@ class DefaultExtension extends MProvider {
     }
 
     // =====================
-    // 1. FIXED SEARCH FUNCTION
+    // 1. YOUR ORIGINAL WORKING SEARCH CODE
     // =====================
-    async search(query, page = 1, filters = []) {
+    async search(query, page, filters) {
         try {
-            // Build search URL with proper encoding
-            const searchUrl = `${this.baseUrl}/browser?keyword=${encodeURIComponent(query)}&page=${page}`;
-            
-            // Add headers to mimic browser request
-            const headers = {
-                "Referer": this.baseUrl,
-                "Origin": this.baseUrl,
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            const filterValues = {
+                type: filters[0]?.state?.filter(f => f.state).map(f => f.value) || [],
+                genre: filters[1]?.state?.filter(f => f.state).map(f => f.value) || [],
+                status: filters[2]?.state?.filter(f => f.state).map(f => f.value) || [],
+                sort: filters[3]?.values?.[filters[3]?.state]?.value || "updated_date",
+                season: filters[4]?.state?.filter(f => f.state).map(f => f.value) || [],
+                year: filters[5]?.state?.filter(f => f.state).map(f => f.value) || [],
+                rating: filters[6]?.state?.filter(f => f.state).map(f => f.value) || [],
+                country: filters[7]?.state?.filter(f => f.state).map(f => f.value) || [],
+                language: filters[8]?.state?.filter(f => f.state).map(f => f.value) || []
             };
 
-            // Make the request
-            const response = await this.client.get(searchUrl, { headers });
-            if (!response.ok) {
-                console.error("Search request failed:", response.status);
-                return { list: [], hasNextPage: false };
+            let slug = "/browser?keyword=" + encodeURIComponent(query);
+            
+            for (const [key, values] of Object.entries(filterValues)) {
+                if (values.length > 0) {
+                    if (key === "sort") {
+                        slug += `&${key}=${values}`;
+                    } else {
+                        values.forEach(value => {
+                            slug += `&${key}[]=${encodeURIComponent(value)}`;
+                        });
+                    }
+                }
             }
 
-            // Parse the HTML
-            const doc = new Document(response.body);
-            if (!doc) return { list: [], hasNextPage: false };
+            slug += `&page=${page}`;
 
-            // Extract anime items - updated selectors
-            const animeItems = doc.select(".film_list-wrap .flw-item, .aitem-wrapper .aitem") || [];
+            const body = await this.getPage(slug);
+            if (!body) return { list: [], hasNextPage: false };
+
+            const titlePref = this.getPreference("animekai_title_lang") || "title";
+            const animeItems = body.select(".aitem-wrapper .aitem") || [];
             
-            const list = animeItems.map(item => {
-                const titleElement = item.selectFirst(".film-name a, a.title");
-                const imageElement = item.selectFirst(".film-poster img, img.film-poster-img");
-                
-                return {
-                    name: titleElement?.text?.trim() || "Unknown Title",
-                    link: titleElement?.getHref || "",
-                    imageUrl: imageElement?.attr("data-src") || 
-                             imageElement?.attr("src") || 
-                             ""
-                };
+            const list = animeItems.map(anime => {
+                const link = anime.selectFirst("a")?.getHref;
+                const imageUrl = anime.selectFirst("img")?.attr("data-src");
+                const name = anime.selectFirst("a.title")?.attr(titlePref) || 
+                            anime.selectFirst("a.title")?.text;
+                return { name, link, imageUrl };
             }).filter(item => item.link && item.imageUrl);
 
-            // Check for next page
-            const pagination = doc.select(".pagination li a, .page-item a");
-            const hasNextPage = pagination.some(item => 
-                item.text?.includes("Next") || item.text?.includes(">")
-            );
+            const paginations = body.select(".pagination > li") || [];
+            const hasNextPage = paginations.length > 0 ? 
+                !paginations[paginations.length - 1].className.includes("active") : false;
 
-            return { 
-                list: list, 
-                hasNextPage: hasNextPage 
-            };
+            return { list, hasNextPage };
         } catch (error) {
-            console.error("Search error:", error);
+            console.error("Search failed:", error);
             return { list: [], hasNextPage: false };
         }
     }
 
+    async getPopular(page) {
+        const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
+        return this.search("", page, [
+            { state: types.map(t => ({ state: true, value: t })) },
+            { state: [] }, { state: [] },
+            { values: [{ value: "trending" }], state: 0 },
+            { state: [] }, { state: [] },
+            { state: [] }, { state: [] },
+            { state: [] }
+        ]);
+    }
+
+    async getLatestUpdates(page) {
+        const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
+        return this.search("", page, [
+            { state: types.map(t => ({ state: true, value: t })) },
+            { state: [] }, { state: [] },
+            { values: [{ value: "updated_date" }], state: 0 },
+            { state: [] }, { state: [] },
+            { state: [] }, { state: [] },
+            { state: [] }
+        ]);
+    }
+
     // =====================
-    // 2. DETAIL EXTRACTION
+    // 2. IMPROVED DETAIL EXTRACTION
     // =====================
     async getDetail(url) {
         try {
             const doc = await this.getPage(url);
             if (!doc) return null;
 
-            // Title with multiple fallbacks
-            const title = doc.selectFirst("h1.title")?.text?.trim() || 
-                         doc.selectFirst(".anime-detail h1")?.text?.trim() || 
-                         "Unknown Title";
+            const titlePref = this.getPreference("animekai_title_lang") || "title";
+            const title = doc.selectFirst("h1.title, .anime-detail h1")?.attr(titlePref) || 
+                        doc.selectFirst("h1.title, .anime-detail h1")?.text;
+            
+            const cover = doc.selectFirst("img.cover, .anime-cover img")?.attr("src");
+            const description = doc.selectFirst(".description, .anime-synopsis")?.text;
 
-            // Cover image with fallbacks
-            const cover = doc.selectFirst(".anime-cover img")?.attr("src") || 
-                        doc.selectFirst("img.cover")?.attr("src") || 
-                        "";
+            // Multiple selector patterns for episode detection
+            const episodeContainers = [
+                ".episode-list",
+                ".episodes-wrapper",
+                ".eplister"
+            ].map(selector => doc.selectFirst(selector)).filter(Boolean);
 
-            // Description
-            const description = doc.selectFirst(".description")?.text?.trim() || 
-                              "No description available";
+            let episodes = [];
+            for (const container of episodeContainers) {
+                const items = container.select(".episode-item, li");
+                episodes = items.map((item, index) => {
+                    const epNum = parseInt(
+                        item.attr("data-number") || 
+                        item.selectFirst(".episode-number")?.text?.match(/\d+/)?.[0] || 
+                        (index + 1)
+                    );
+                    const epUrl = item.selectFirst("a")?.getHref || `${url}/episode/${epNum}`;
+                    const epName = item.selectFirst(".episode-title")?.text || `Episode ${epNum}`;
+                    const epThumb = item.selectFirst("img")?.attr("src") || 
+                                   item.selectFirst("img")?.attr("data-src") || 
+                                   cover;
 
-            // Episodes
-            const episodeItems = doc.select(".episode-list li, .eplist li") || [];
-            const episodes = episodeItems.map((item, index) => {
-                const epNum = parseInt(
-                    item.attr("data-episode") || 
-                    item.selectFirst(".episode-num")?.text?.match(/\d+/)?.[0] || 
-                    (index + 1)
-                );
+                    return {
+                        name: epName,
+                        url: epUrl,
+                        episode: epNum,
+                        thumbnailUrl: epThumb
+                    };
+                }).filter(ep => ep.url);
                 
-                return {
-                    name: item.selectFirst(".episode-title")?.text?.trim() || `Episode ${epNum}`,
-                    url: item.selectFirst("a")?.getHref || `${url}/episode/${epNum}`,
-                    episode: epNum,
-                    thumbnailUrl: item.selectFirst("img")?.attr("src") || cover
-                };
-            }).filter(ep => ep.url);
+                if (episodes.length > 0) break;
+            }
 
             return {
                 name: title,
@@ -120,42 +153,82 @@ class DefaultExtension extends MProvider {
                 episodes: episodes.sort((a, b) => a.episode - b.episode)
             };
         } catch (error) {
-            console.error("Detail extraction error:", error);
+            console.error("Failed to get detail:", error);
             return null;
         }
     }
 
     // =====================
-    // 3. VIDEO EXTRACTION
+    // 3. IMPROVED VIDEO EXTRACTION
     // =====================
-    async getVideoList(episodeUrl) {
+    async getVideoList(url) {
         try {
-            const doc = await this.getPage(episodeUrl);
+            const doc = await this.getPage(url);
             if (!doc) return [];
 
-            // Get user preferences
-            const prefServer = this.getPreference("animekai_pref_stream_server") || "1";
-            const showUncensored = this.getPreference("animekai_show_uncen_epsiodes") !== false;
+            const prefServers = this.getPreference("animekai_pref_stream_server") || ["1"];
+            const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub"];
+            const splitStreams = this.getPreference("animekai_pref_extract_streams") !== false;
 
-            // Find the preferred server
-            const server = doc.selectFirst(`.server-list li[data-server="${prefServer}"], 
-                                          .server-tab[data-id="${prefServer}"]`);
-            if (!server) return [];
+            // Multiple selector patterns for server detection
+            const serverContainers = [
+                ".server-list",
+                ".servers-tab",
+                ".server-selector"
+            ].map(selector => doc.selectFirst(selector)).filter(Boolean);
 
-            // Extract video sources
-            const videoSources = server.select("[data-video], .video-item") || [];
-            return videoSources.map(source => {
-                const isUncensored = source.text?.includes("Uncensored");
-                if (isUncensored && !showUncensored) return null;
+            let servers = [];
+            for (const container of serverContainers) {
+                servers = container.select(".server-item, li").map(server => ({
+                    id: server.attr("data-id") || server.attr("id")?.replace("server-", "") || "default",
+                    name: server.selectFirst(".server-name")?.text?.trim() || "Default",
+                    element: server
+                })).filter(s => s.id);
+                
+                if (servers.length > 0) break;
+            }
 
-                return {
-                    name: source.selectFirst(".video-name")?.text?.trim() || "Source",
-                    url: source.attr("data-video") || source.attr("data-src"),
-                    quality: source.text?.match(/1080|720|480/)?.[0] || "Auto"
-                };
-            }).filter(Boolean);
+            const streams = [];
+            for (const server of servers.filter(s => prefServers.includes(s.id))) {
+                const videoItems = server.element.select(".video-item, [data-video]");
+                for (const video of videoItems) {
+                    const type = (video.attr("data-type") || "sub").toLowerCase();
+                    if (!prefSubDub.includes(type)) continue;
+
+                    const videoUrl = video.attr("data-video") || 
+                                   video.attr("data-src") || 
+                                   video.selectFirst("iframe")?.attr("src");
+                    
+                    if (videoUrl) {
+                        if (splitStreams) {
+                            [360, 720, 1080].forEach(quality => {
+                                streams.push({
+                                    name: `${server.name} - ${type} - ${quality}p`,
+                                    url: videoUrl,
+                                    quality: quality,
+                                    server: server.name,
+                                    type: type
+                                });
+                            });
+                        } else {
+                            streams.push({
+                                name: `${server.name} - ${type}`,
+                                url: videoUrl,
+                                quality: 0,
+                                server: server.name,
+                                type: type
+                            });
+                        }
+                    }
+                }
+            }
+
+            return streams.sort((a, b) => {
+                const serverCompare = prefServers.indexOf(a.server) - prefServers.indexOf(b.server);
+                return serverCompare !== 0 ? serverCompare : (b.quality - a.quality);
+            });
         } catch (error) {
-            console.error("Video extraction error:", error);
+            console.error("Failed to get video list:", error);
             return [];
         }
     }
@@ -173,6 +246,15 @@ class DefaultExtension extends MProvider {
                     value: "https://animekai.to",
                     dialogTitle: "Override base url",
                     dialogMessage: "",
+                }
+            }, {
+                key: "animekai_popular_latest_type",
+                multiSelectListPreference: {
+                    title: 'Preferred type of anime to be shown in popular & latest section',
+                    summary: 'Choose which type of anime you want to see in the popular & latest section',
+                    values: ["tv", "special", "ova", "ona"],
+                    entries: ["TV", "Special", "OVA", "ONA", "Music", "Movie"],
+                    entryValues: ["tv", "special", "ova", "ona", "music", "movie"]
                 }
             }, {
                 key: "animekai_title_lang",
@@ -193,14 +275,30 @@ class DefaultExtension extends MProvider {
                 }
             }, {
                 key: "animekai_pref_stream_server",
-                listPreference: {
+                multiSelectListPreference: {
                     title: 'Preferred server',
-                    summary: 'Choose the server you want to extract streams from',
-                    valueIndex: 0,
+                    summary: 'Choose the server/s you want to extract streams from',
+                    values: ["1"],
                     entries: ["Server 1", "Server 2"],
                     entryValues: ["1", "2"]
                 }
-            }
+            }, {
+                key: "animekai_pref_stream_subdub_type",
+                multiSelectListPreference: {
+                    title: 'Preferred stream sub/dub type',
+                    summary: '',
+                    values: ["sub", "dub"],
+                    entries: ["Sub", "Dub"],
+                    entryValues: ["sub", "dub"]
+                }
+            }, {
+                key: "animekai_pref_extract_streams",
+                switchPreferenceCompat: {
+                    title: 'Split stream into different quality streams',
+                    summary: "Split stream Auto into 360p/720p/1080p",
+                    value: true
+                }
+            },
         ];
     }
 
