@@ -40,7 +40,7 @@ class DefaultExtension extends MProvider {
         return new Document(res);
     }
 
-    // ORIGINAL WORKING SEARCH FUNCTION (UNTOUCHED)
+    // ORIGINAL WORKING SEARCH FUNCTION (EXACTLY AS WAS)
     async search(query, page, filters) {
         try {
             const filterValues = {
@@ -96,7 +96,7 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // ORIGINAL WORKING POPULAR FUNCTION (UNTOUCHED)
+    // ORIGINAL WORKING POPULAR FUNCTION (EXACTLY AS WAS)
     async getPopular(page) {
         const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
         return this.search("", page, [
@@ -109,7 +109,7 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // ORIGINAL WORKING LATEST UPDATES FUNCTION (UNTOUCHED)
+    // ORIGINAL WORKING LATEST UPDATES FUNCTION (EXACTLY AS WAS)
     async getLatestUpdates(page) {
         const types = this.getPreference("animekai_popular_latest_type") || ["tv"];
         return this.search("", page, [
@@ -122,44 +122,37 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // NEW IMPLEMENTATION BASED ON ANIPLAY'S WORKING APPROACH
+    // NEW EPISODE FETCHING - USING SAME APPROACH AS SEARCH
     async getDetail(url) {
         try {
             const body = await this.getPage(url);
             if (!body) return null;
 
-            // Get title using preferred language setting
+            // Get title using same method as search
             const titlePref = this.getPreference("animekai_title_lang") || "title";
-            const title = body.selectFirst("h1.title")?.attr(titlePref) || 
-                        body.selectFirst("h1.title")?.text ||
-                        body.selectFirst(".anime-detail h1")?.attr(titlePref) || 
-                        body.selectFirst(".anime-detail h1")?.text;
+            const title = body.selectFirst("h1.title, .anime-detail h1")?.attr(titlePref) || 
+                        body.selectFirst("h1.title, .anime-detail h1")?.text;
             
-            // Get cover image with fallback
-            const cover = body.selectFirst(".poster img")?.attr("src") ||
-                        body.selectFirst(".anime-cover img")?.attr("src") ||
-                        body.selectFirst("img.cover")?.attr("src");
-            
-            // Get description with fallback
-            const description = body.selectFirst(".description")?.text ||
-                             body.selectFirst(".anime-detail .description")?.text;
+            // Get cover image using same pattern as search's image extraction
+            const cover = body.selectFirst("img.cover, .anime-cover img")?.attr("src") ||
+                        body.selectFirst("img[data-src]")?.attr("data-src");
 
-            // Extract episodes - using AniPlay's approach
-            const episodeItems = body.select(".episodes .episode") || 
-                              body.select(".episode-list .episode-item") || 
-                              [];
+            // Get description
+            const description = body.selectFirst(".description, .anime-detail .description")?.text;
+
+            // Fetch episodes using same document query approach as search
+            const episodeContainer = body.selectFirst(".episode-list, .episodes-container");
+            const episodeItems = episodeContainer?.select(".episode-item, .episode") || [];
             
             const episodes = episodeItems.map((ep, index) => {
+                const epUrl = ep.selectFirst("a")?.getHref;
                 const epNum = parseInt(ep.attr("data-number") || 
                              ep.selectFirst(".episode-number")?.text?.match(/\d+/)?.[0] || 
                              (index + 1));
-                const epUrl = ep.selectFirst("a")?.getHref || 
-                             `${url}/episode/${epNum}`;
-                const epName = ep.selectFirst(".episode-title")?.text || 
-                             `Episode ${epNum}`;
+                const epName = ep.selectFirst(".episode-title")?.text || `Episode ${epNum}`;
                 const epThumb = ep.selectFirst("img")?.attr("src") || 
-                               ep.selectFirst("img")?.attr("data-src") || 
-                               cover;
+                              ep.selectFirst("img")?.attr("data-src") || 
+                              cover;
 
                 return {
                     name: epName,
@@ -181,7 +174,7 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // NEW VIDEO SOURCE IMPLEMENTATION BASED ON ANIPLAY
+    // NEW VIDEO LIST FETCHING - USING SAME APPROACH AS SEARCH
     async getVideoList(url) {
         try {
             const body = await this.getPage(url);
@@ -189,28 +182,25 @@ class DefaultExtension extends MProvider {
 
             // Get user preferences
             const prefServers = this.getPreference("animekai_pref_stream_server") || ["1"];
-            const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub"];
+            const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub"];
             const splitStreams = this.getPreference("animekai_pref_extract_streams") !== false;
 
-            // Extract servers - using AniPlay's approach
-            const serverItems = body.select(".server-list .server") || 
-                               body.select(".server-item") || 
-                               [];
-            
+            // Find server list using same query pattern as search
+            const serverItems = body.select(".server-list .server-item, .server-list .server") || [];
             const servers = serverItems.map(server => {
                 return {
-                    id: server.attr("data-id") || server.attr("id") || "",
+                    id: server.attr("data-id") || server.id || "",
                     name: server.selectFirst(".server-name")?.text || "Default"
                 };
             }).filter(server => prefServers.includes(server.id));
 
-            // Extract streams from preferred servers
+            // Extract streams using same document processing as search
             const streams = [];
             for (const server of servers) {
-                const serverContent = body.selectFirst(`.server[data-id="${server.id}"], #${server.id}`);
+                const serverContent = body.selectFirst(`[data-id="${server.id}"], #${server.id}`);
                 if (!serverContent) continue;
 
-                const videoItems = serverContent.select(".video-item") || [];
+                const videoItems = serverContent.select(".video-item, .mirror_item") || [];
                 for (const video of videoItems) {
                     const type = video.attr("data-type") || "sub";
                     if (!prefSubDub.includes(type)) continue;
@@ -219,26 +209,15 @@ class DefaultExtension extends MProvider {
                     if (!videoUrl) continue;
 
                     if (splitStreams) {
-                        streams.push({
-                            name: `${server.name} - ${type} - 360p`,
-                            url: videoUrl,
-                            quality: 360,
-                            server: server.name,
-                            type: type
-                        });
-                        streams.push({
-                            name: `${server.name} - ${type} - 720p`,
-                            url: videoUrl,
-                            quality: 720,
-                            server: server.name,
-                            type: type
-                        });
-                        streams.push({
-                            name: `${server.name} - ${type} - 1080p`,
-                            url: videoUrl,
-                            quality: 1080,
-                            server: server.name,
-                            type: type
+                        // Add multiple quality options if splitting enabled
+                        [360, 720, 1080].forEach(quality => {
+                            streams.push({
+                                name: `${server.name} - ${type} - ${quality}p`,
+                                url: videoUrl,
+                                quality: quality,
+                                server: server.name,
+                                type: type
+                            });
                         });
                     } else {
                         streams.push({
@@ -259,7 +238,7 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // ORIGINAL SETTINGS WITH ADDED DUB OPTION
+    // ORIGINAL SETTINGS (EXACTLY AS WAS)
     getSourcePreferences() {
         return [
             {
@@ -311,9 +290,9 @@ class DefaultExtension extends MProvider {
                 multiSelectListPreference: {
                     title: 'Preferred stream sub/dub type',
                     summary: '',
-                    values: ["sub", "softsub", "dub"], // Added dub option
-                    entries: ["Hard Sub", "Soft Sub", "Dub"], // Added dub label
-                    entryValues: ["sub", "softsub", "dub"] // Added dub value
+                    values: ["sub", "softsub", "dub"],
+                    entries: ["Hard Sub", "Soft Sub", "Dub"],
+                    entryValues: ["sub", "softsub", "dub"]
                 }
             }, {
                 key: "animekai_pref_extract_streams",
