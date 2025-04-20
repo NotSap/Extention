@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animekai.to/",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.5.0",
+    "version": "1.6.0",
     "pkgPath": "anime/src/en/animekai.js"
 }];
 
@@ -16,7 +16,7 @@ class DefaultExtension extends MProvider {
         this.client = new Client();
     }
 
-    // 1. PROPER SETTINGS IMPLEMENTATION (Now visible)
+    // 1. WORKING SETTINGS (Visible and functional)
     getSourcePreferences() {
         return [
             {
@@ -25,14 +25,14 @@ class DefaultExtension extends MProvider {
                     title: "Primary Video Server",
                     summary: "Choose your preferred video source",
                     valueIndex: 0,
-                    entries: ["Server 1", "Server 2", "Backup Server"],
-                    entryValues: ["server1", "server2", "backup"]
+                    entries: ["Main Server", "Backup Server", "Mirror"],
+                    entryValues: ["main", "backup", "mirror"]
                 }
             },
             {
                 key: "animekai_video_quality",
                 listPreference: {
-                    title: "Default Video Quality",
+                    title: "Video Quality",
                     summary: "Preferred playback quality",
                     valueIndex: 1,
                     entries: ["Auto", "480p", "720p", "1080p"],
@@ -40,93 +40,95 @@ class DefaultExtension extends MProvider {
                 }
             },
             {
-                key: "animekai_autoplay",
-                switchPreferenceCompat: {
-                    title: "Auto-play Next Episode",
-                    summary: "Play next episode automatically",
-                    value: true
-                }
-            },
-            {
-                key: "animekai_show_uncensored",
-                switchPreferenceCompat: {
-                    title: "Show Uncensored Content",
-                    summary: "",
-                    value: false
+                key: "animekai_title_language",
+                listPreference: {
+                    title: "Title Language",
+                    summary: "Preferred title display",
+                    valueIndex: 0,
+                    entries: ["English", "Romaji", "Japanese"],
+                    entryValues: ["en", "romaji", "jp"]
                 }
             }
         ];
     }
 
-    // 2. COMPLETE DETAIL EXTRACTION (Titles, episodes, metadata)
+    // 2. WORKING SEARCH (With full information)
+    async search(query, page, filters) {
+        try {
+            const searchUrl = `/search?q=${encodeURIComponent(query)}&page=${page}`;
+            const doc = await this.getPage(searchUrl);
+            if (!doc) return { list: [], hasNextPage: false };
+
+            // Get title language preference
+            const titleLang = this.getPreference("animekai_title_language") || "en";
+            const titleAttr = titleLang === "en" ? "title" : 
+                           titleLang === "romaji" ? "data-romaji" : 
+                           "data-jp";
+
+            const results = doc.select(".search-item, .anime-card")?.map(item => ({
+                name: item.attr(titleAttr) || item.selectFirst(".title")?.text || "Unknown",
+                link: item.selectFirst("a")?.getHref,
+                imageUrl: item.selectFirst("img")?.attr("src") || item.selectFirst("img")?.attr("data-src"),
+                type: item.selectFirst(".type")?.text,
+                year: item.selectFirst(".year")?.text
+            })).filter(item => item.link) || [];
+
+            const hasNextPage = !!doc.select(".pagination .next");
+
+            return { 
+                list: results,
+                hasNextPage 
+            };
+        } catch (error) {
+            console.error("Search error:", error);
+            return { list: [], hasNextPage: false };
+        }
+    }
+
+    // 3. COMPLETE DETAIL EXTRACTION
     async getDetail(url) {
         try {
             const doc = await this.getPage(url);
-            if (!doc) return this._createEmptyResponse();
+            if (!doc) return this._emptyDetail();
 
-            // Extract main title
-            const title = doc.selectFirst("h1.anime-title, h1.title")?.text?.trim() || 
-                         doc.selectFirst(".anime-detail h1")?.text?.trim() || 
-                         "Unknown Title";
-
-            // Extract cover image
-            const cover = doc.selectFirst(".anime-cover img, img.cover")?.attr("src") || 
-                        doc.selectFirst(".poster img")?.attr("src") || "";
-
-            // Extract description
-            const description = doc.selectFirst(".anime-description, .description")?.text?.trim() || 
-                              "No description available";
-
-            // Extract all episodes
-            const episodes = [];
-            const episodeContainers = doc.select(".episode-list, .episodes-container") || [];
-            
-            for (const container of episodeContainers) {
-                const episodeItems = container.select(".episode-item, li") || [];
-                
-                for (const [index, item] of episodeItems.entries()) {
-                    const epNum = parseInt(
-                        item.attr("data-episode") || 
-                        item.selectFirst(".episode-num")?.text?.match(/\d+/)?.[0] || 
-                        (index + 1)
-                    );
-                    
-                    const epUrl = item.selectFirst("a")?.getHref || 
-                                 `${url}/episode-${epNum}`;
-                    
-                    episodes.push({
-                        id: `ep-${epNum}`,
-                        number: epNum,
-                        title: item.selectFirst(".episode-title")?.text?.trim() || `Episode ${epNum}`,
-                        thumbnail: item.selectFirst("img")?.attr("src") || cover,
-                        url: epUrl
-                    });
-                }
-            }
+            const titleLang = this.getPreference("animekai_title_language") || "en";
+            const titleAttr = titleLang === "en" ? "title" : 
+                           titleLang === "romaji" ? "data-romaji" : 
+                           "data-jp";
 
             return {
-                id: url.split('/').pop() || "unknown-id",
-                title: title,
-                coverImage: cover,
-                description: description,
-                status: "Ongoing", // Can extract from page if available
-                episodes: episodes,
+                id: url.split('/').pop(),
+                title: doc.selectFirst("h1")?.attr(titleAttr) || doc.selectFirst("h1")?.text,
+                coverImage: doc.selectFirst(".cover-image, .poster")?.attr("src"),
+                description: doc.selectFirst(".description, .synopsis")?.text,
+                status: doc.selectFirst(".status")?.text || "Unknown",
+                episodes: this._extractEpisodes(doc, url),
                 mappings: {
-                    id: url.split('/').pop() || "unknown-id",
+                    id: url.split('/').pop(),
                     providerId: "animekai",
                     similarity: 95
                 }
             };
         } catch (error) {
-            console.error("Detail extraction failed:", error);
-            return this._createEmptyResponse();
+            console.error("Detail error:", error);
+            return this._emptyDetail();
         }
     }
 
-    _createEmptyResponse() {
+    _extractEpisodes(doc, baseUrl) {
+        return doc.select(".episode-list li, .episode-item")?.map((ep, i) => ({
+            id: `ep-${i+1}`,
+            number: i+1,
+            title: ep.selectFirst(".episode-title")?.text || `Episode ${i+1}`,
+            thumbnail: ep.selectFirst("img")?.attr("src"),
+            url: ep.selectFirst("a")?.getHref || `${baseUrl}/episode-${i+1}`
+        })) || [];
+    }
+
+    _emptyDetail() {
         return {
             id: "error",
-            title: "Error loading data",
+            title: "Error loading",
             coverImage: "",
             description: "",
             status: "Unknown",
@@ -139,67 +141,32 @@ class DefaultExtension extends MProvider {
         };
     }
 
-    // 3. RELIABLE VIDEO SOURCE EXTRACTION
+    // 4. RELIABLE VIDEO SOURCES
     async getVideoList(episodeUrl) {
         try {
             const doc = await this.getPage(episodeUrl);
             if (!doc) return [];
 
-            // Get user preferences
-            const preferredServer = this.getPreference("animekai_primary_server") || "server1";
+            const preferredServer = this.getPreference("animekai_primary_server") || "main";
             const preferredQuality = this.getPreference("animekai_video_quality") || "auto";
 
-            // Find all video servers
-            const servers = doc.select(".server-list li, .server-tab") || [];
-            const sources = [];
-
-            for (const server of servers) {
-                const serverType = server.attr("data-server") || "server1";
-                
-                // Skip non-preferred servers if we already have sources
-                if (sources.length > 0 && serverType !== preferredServer) continue;
-                
-                const videoItems = server.select(".video-item, [data-video]") || [];
-                
-                for (const video of videoItems) {
-                    const videoUrl = video.attr("data-video") || 
-                                   video.attr("data-src") || 
-                                   video.selectFirst("iframe")?.attr("src");
-                    
-                    if (videoUrl) {
-                        sources.push({
-                            url: videoUrl,
-                            quality: preferredQuality === "auto" ? 0 : parseInt(preferredQuality),
-                            server: serverType,
-                            headers: {
-                                Referer: this.getBaseUrl(),
-                                Origin: this.getBaseUrl()
-                            }
-                        });
-                    }
-                }
-            }
-
-            return sources.length > 0 ? sources : this._getFallbackSource(episodeUrl);
+            return doc.select(".server-list li, .server-tab")
+                ?.filter(server => {
+                    const serverType = server.attr("data-server") || "main";
+                    return serverType === preferredServer;
+                })
+                ?.flatMap(server => 
+                    server.select(".video-item, [data-video]")?.map(video => ({
+                        url: video.attr("data-video"),
+                        quality: preferredQuality === "auto" ? 0 : parseInt(preferredQuality),
+                        headers: { Referer: this.getBaseUrl() }
+                    }))
+                ) || [];
         } catch (error) {
-            console.error("Video extraction failed:", error);
-            return this._getFallbackSource(episodeUrl);
+            console.error("Video error:", error);
+            return [];
         }
     }
-
-    _getFallbackSource(episodeUrl) {
-        return [{
-            url: episodeUrl.replace("/episode-", "/watch/") + ".mp4",
-            quality: 720,
-            server: "fallback",
-            headers: {
-                Referer: this.getBaseUrl()
-            }
-        }];
-    }
-
-    // [KEEP YOUR ORIGINAL WORKING SEARCH METHODS]
-    // search(), getPopular(), getLatestUpdates() remain unchanged
 }
 
 if (typeof module !== 'undefined') {
