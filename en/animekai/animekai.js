@@ -1,206 +1,140 @@
-const mangayomiSources = [{
-    "name": "AnimeKai",
-    "lang": "en",
-    "baseUrl": "https://animekai.to",
-    "apiUrl": "",
-    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animekai.to/",
-    "typeSource": "single",
-    "itemType": 1,
-    "version": "1.3.0",
-    "pkgPath": "anime/src/en/animekai.js"
-}];
+// animekai.js - AnymeX Provider for AnimeKai
+const AnimeKai = {
+    // Metadata
+    info: {
+        name: "AnimeKai",
+        version: "1.0.1",
+        type: "anime",
+        author: "YourName",
+        url: "https://animekai.to",
+        logo: "https://www.google.com/s2/favicons?sz=64&domain=https://animekai.to"
+    },
 
-class DefaultExtension extends MProvider {
-    constructor() {
-        super();
-        this.client = new Client();
-        this.titleCache = new Map();
-    }
-
-    // SEARCH (unchanged - works fine)
-    async search(query, page, filters) {
+    // Main search function (now properly integrated with AnymeX)
+    async search(query, page = 1) {
         try {
-            let result = await this._exactSearch(query, page, filters);
-            if (result.list.length === 0) {
-                result = await this._fuzzySearch(query, page);
-                result.list.forEach(item => {
-                    this.titleCache.set(item.name.toLowerCase(), item.link);
-                });
-            }
-            return result;
-        } catch (error) {
-            console.error("Search failed:", error);
-            return { list: [], hasNextPage: false };
-        }
-    }
-
-    async _exactSearch(query, page, filters) {
-        const slug = "/browser?keyword=" + encodeURIComponent(query) + `&page=${page}`;
-        const body = await this.getPage(slug);
-        if (!body) return { list: [], hasNextPage: false };
-
-        const animeItems = body.select(".aitem-wrapper .aitem") || [];
-        const list = animeItems.map(anime => ({
-            name: anime.selectFirst("a.title")?.text?.trim() || "Unknown",
-            link: anime.selectFirst("a")?.getHref,
-            imageUrl: anime.selectFirst("img")?.attr("data-src") || anime.selectFirst("img")?.attr("src")
-        })).filter(item => item.link);
-
-        return {
-            list: list,
-            hasNextPage: body.select(".pagination > li").length > 0
-        };
-    }
-
-    // IMPROVED DETAIL EXTRACTION
-    async getDetail(url) {
-        try {
-            const doc = await this.getPage(url);
-            if (!doc) return this._createFallbackDetail(url);
-
-            // Better title extraction
-            const title = doc.selectFirst("h1.title")?.text?.trim() || 
-                         doc.selectFirst("meta[property='og:title']")?.attr("content")?.trim() || 
-                         url.split("/").pop().replace(/-/g, " ");
-
-            // Better cover image extraction
-            const cover = doc.selectFirst("img.cover")?.attr("src") || 
-                         doc.selectFirst("meta[property='og:image']")?.attr("content") || "";
-
-            // Improved episode extraction
-            let episodes = [];
-            const episodeElements = doc.select(".episode-list li a") || [];
+            const searchUrl = `https://animekai.to/browser?keyword=${encodeURIComponent(query)}&page=${page}`;
+            const html = await this.request.get(searchUrl);
             
-            episodes = episodeElements.map((ep, i) => {
-                const epUrl = ep.getHref;
-                const epNumMatch = epUrl.match(/episode-(\d+)/);
-                const epNum = epNumMatch ? parseInt(epNumMatch[1]) : i+1;
-                
-                return {
-                    id: `ep-${epNum}`,
-                    number: epNum,
-                    title: ep.selectFirst(".episode-title")?.text?.trim() || `Episode ${epNum}`,
-                    url: epUrl,
-                    thumbnail: ep.selectFirst("img")?.attr("src") || cover
-                };
+            if (!html) return { results: [] };
+
+            const $ = this.cheerio.load(html);
+            const results = [];
+
+            $('.aitem-wrapper .aitem').each((i, el) => {
+                results.push({
+                    title: $(el).find('.title').text().trim(),
+                    url: $(el).find('a').attr('href'),
+                    image: $(el).find('img').attr('data-src') || $(el).find('img').attr('src'),
+                    type: "anime",
+                    provider: this.info.name
+                });
             });
 
-            // If no episodes found, check for movie format
-            if (episodes.length === 0) {
-                const watchBtn = doc.selectFirst(".watch-btn");
-                if (watchBtn) {
-                    episodes = [{
-                        id: "movie",
-                        number: 1,
-                        title: "Movie",
-                        url: watchBtn.getHref,
-                        thumbnail: cover
-                    }];
-                }
+            return {
+                results: results,
+                hasMore: $('.pagination li').length > 0
+            };
+        } catch (error) {
+            console.error("[AnimeKai] Search error:", error);
+            return { results: [] };
+        }
+    },
+
+    // Get anime details
+    async getAnimeInfo(url) {
+        try {
+            const html = await this.request.get(url);
+            if (!html) return null;
+
+            const $ = this.cheerio.load(html);
+            const title = $('h1.title').text().trim();
+            const cover = $('img.cover').attr('src') || $('meta[property="og:image"]').attr('content');
+
+            // Extract episodes
+            const episodes = [];
+            $('.episode-list li a').each((i, el) => {
+                const epUrl = $(el).attr('href');
+                const epNum = parseInt(epUrl.match(/episode-(\d+)/)?.[1]) || i+1;
+                
+                episodes.push({
+                    number: epNum,
+                    title: $(el).find('.episode-title').text().trim() || `Episode ${epNum}`,
+                    url: epUrl
+                });
+            });
+
+            // If no episodes found, check for movie
+            if (episodes.length === 0 && $('.watch-btn').length) {
+                episodes.push({
+                    number: 1,
+                    title: "Movie",
+                    url: $('.watch-btn').attr('href')
+                });
             }
 
             return {
-                id: url.split("/").pop() || "unknown",
                 title: title,
-                coverImage: cover,
+                cover: cover,
                 episodes: episodes,
-                mappings: {
-                    id: url.split("/").pop() || "unknown",
-                    providerId: "animekai",
-                    similarity: 90
-                }
+                synopsis: $('.description').text().trim(),
+                status: $('.info-item:contains("Status")').text().replace("Status:", "").trim()
             };
         } catch (error) {
-            console.error("Detail fetch failed:", error);
-            return this._createFallbackDetail(url);
+            console.error("[AnimeKai] Info error:", error);
+            return null;
         }
-    }
+    },
 
-    // IMPROVED VIDEO SOURCE EXTRACTION
-    async getVideoList(episodeUrl) {
+    // Get video sources
+    async getVideoSources(episodeUrl) {
         try {
-            const doc = await this.getPage(episodeUrl);
-            if (!doc) return this._getFallbackSources(episodeUrl);
+            const html = await this.request.get(episodeUrl);
+            if (!html) return [];
 
-            // Extract from iframe embeds
-            const iframe = doc.selectFirst("iframe.video-embed");
-            if (iframe) {
-                const embedUrl = iframe.attr("src");
-                if (embedUrl) {
-                    return [{
-                        url: embedUrl,
-                        quality: 1080,
-                        server: "Primary"
-                    }];
-                }
+            const $ = this.cheerio.load(html);
+            const sources = [];
+
+            // Check for iframe embeds
+            const iframe = $('iframe.video-embed');
+            if (iframe.length) {
+                sources.push({
+                    url: iframe.attr('src'),
+                    quality: "1080p",
+                    isM3U8: false
+                });
             }
 
-            // Extract from video players
-            const videoSources = doc.select("source");
-            if (videoSources.length > 0) {
-                return videoSources.map(source => ({
-                    url: source.attr("src"),
-                    quality: parseInt(source.attr("data-quality")) || 720,
-                    server: "Direct"
-                })).filter(source => source.url);
-            }
+            // Check for direct video sources
+            $('source').each((i, el) => {
+                sources.push({
+                    url: $(el).attr('src'),
+                    quality: $(el).attr('data-quality') || "720p",
+                    isM3U8: $(el).attr('src').includes('.m3u8')
+                });
+            });
 
-            // Fallback to server list
-            const servers = doc.select(".server-list li");
-            if (servers.length > 0) {
-                return servers.map(server => ({
-                    url: server.attr("data-video") || server.selectFirst("a")?.getHref,
-                    quality: server.text.includes("1080") ? 1080 : 
-                           server.text.includes("720") ? 720 : 480,
-                    server: server.selectFirst(".server-name")?.text?.trim() || "Server"
-                })).filter(source => source.url);
-            }
+            // Check for server list
+            $('.server-list li').each((i, el) => {
+                sources.push({
+                    url: $(el).attr('data-video') || $(el).find('a').attr('href'),
+                    quality: $(el).text().includes('1080') ? "1080p" : 
+                           $(el).text().includes('720') ? "720p" : "480p",
+                    isM3U8: false
+                });
+            });
 
-            return this._getFallbackSources(episodeUrl);
+            return sources.filter(source => source.url);
         } catch (error) {
-            console.error("Video list failed:", error);
-            return this._getFallbackSources(episodeUrl);
+            console.error("[AnimeKai] Video error:", error);
+            return [];
         }
     }
+};
 
-    // FALLBACKS (unchanged)
-    _createFallbackDetail(url) {
-        const id = url.split("/").pop() || "fallback";
-        return {
-            id: id,
-            title: id.replace(/-/g, " "),
-            coverImage: "",
-            episodes: Array.from({ length: 12 }, (_, i) => ({
-                id: `ep-${i+1}`,
-                number: i+1,
-                title: `Episode ${i+1}`,
-                url: `${url}/episode-${i+1}`,
-                thumbnail: ""
-            })),
-            mappings: {
-                id: id,
-                providerId: "animekai",
-                similarity: 70
-            }
-        };
-    }
-
-    _getFallbackSources(url) {
-        return [{
-            url: url.replace("/episode-", "/watch/") + ".mp4",
-            quality: 720,
-            server: "Fallback"
-        }];
-    }
-
-    // SETTINGS (add your original settings here)
-    getSourcePreferences() {
-        return [
-            // Your original settings array
-        ];
-    }
-}
-
-if (typeof module !== 'undefined') {
-    module.exports = mangayomiSources;
+// Register the provider
+if (typeof registerProvider === 'function') {
+    registerProvider(AnimeKai);
+} else {
+    module.exports = AnimeKai;
 }
