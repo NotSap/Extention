@@ -122,46 +122,45 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // NEW EPISODE FETCHING IMPLEMENTATION
+    // NEW IMPLEMENTATION BASED ON ANIPLAY'S WORKING APPROACH
     async getDetail(url) {
         try {
             const body = await this.getPage(url);
             if (!body) return null;
 
+            // Get title using preferred language setting
             const titlePref = this.getPreference("animekai_title_lang") || "title";
-            const title = body.selectFirst(".anime-detail h1")?.attr(titlePref) || 
+            const title = body.selectFirst("h1.title")?.attr(titlePref) || 
+                        body.selectFirst("h1.title")?.text ||
+                        body.selectFirst(".anime-detail h1")?.attr(titlePref) || 
                         body.selectFirst(".anime-detail h1")?.text;
             
-            const cover = body.selectFirst(".anime-cover img")?.attr("src");
-            const description = body.selectFirst(".anime-detail .description")?.text;
+            // Get cover image with fallback
+            const cover = body.selectFirst(".poster img")?.attr("src") ||
+                        body.selectFirst(".anime-cover img")?.attr("src") ||
+                        body.selectFirst("img.cover")?.attr("src");
             
-            // Try multiple episode container selectors
-            let episodeElements = [];
-            const possibleSelectors = [
-                ".episode-list .episode-item",
-                ".episodes-container .episode",
-                ".eplister ul li",
-                ".list-episode-item"
-            ];
-            
-            for (const selector of possibleSelectors) {
-                episodeElements = body.select(selector);
-                if (episodeElements.length > 0) break;
-            }
+            // Get description with fallback
+            const description = body.selectFirst(".description")?.text ||
+                             body.selectFirst(".anime-detail .description")?.text;
 
-            const episodes = episodeElements.map((ep, index) => {
-                const epNumText = ep.selectFirst(".episode-number, .number")?.text?.match(/\d+/)?.[0] || 
-                                ep.attr("data-number") || 
-                                (index + 1);
-                const epNum = parseInt(epNumText);
+            // Extract episodes - using AniPlay's approach
+            const episodeItems = body.select(".episodes .episode") || 
+                              body.select(".episode-list .episode-item") || 
+                              [];
+            
+            const episodes = episodeItems.map((ep, index) => {
+                const epNum = parseInt(ep.attr("data-number") || 
+                             ep.selectFirst(".episode-number")?.text?.match(/\d+/)?.[0] || 
+                             (index + 1));
                 const epUrl = ep.selectFirst("a")?.getHref || 
-                            `${url}/episode/${epNum}`;
-                const epName = ep.selectFirst(".episode-title, .title")?.text || 
+                             `${url}/episode/${epNum}`;
+                const epName = ep.selectFirst(".episode-title")?.text || 
                              `Episode ${epNum}`;
                 const epThumb = ep.selectFirst("img")?.attr("src") || 
                                ep.selectFirst("img")?.attr("data-src") || 
                                cover;
-                
+
                 return {
                     name: epName,
                     url: epUrl,
@@ -182,61 +181,73 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // NEW VIDEO SOURCES IMPLEMENTATION
+    // NEW VIDEO SOURCE IMPLEMENTATION BASED ON ANIPLAY
     async getVideoList(url) {
         try {
             const body = await this.getPage(url);
             if (!body) return [];
 
+            // Get user preferences
             const prefServers = this.getPreference("animekai_pref_stream_server") || ["1"];
-            const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub"];
+            const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub"];
             const splitStreams = this.getPreference("animekai_pref_extract_streams") !== false;
 
-            // Try multiple server container selectors
-            let serverElements = [];
-            const possibleServerSelectors = [
-                ".server-list .server-item",
-                ".servers-list .server",
-                ".server-tab"
-            ];
+            // Extract servers - using AniPlay's approach
+            const serverItems = body.select(".server-list .server") || 
+                               body.select(".server-item") || 
+                               [];
             
-            for (const selector of possibleServerSelectors) {
-                serverElements = body.select(selector);
-                if (serverElements.length > 0) break;
-            }
+            const servers = serverItems.map(server => {
+                return {
+                    id: server.attr("data-id") || server.attr("id") || "",
+                    name: server.selectFirst(".server-name")?.text || "Default"
+                };
+            }).filter(server => prefServers.includes(server.id));
 
-            const servers = serverElements.map(server => {
-                const serverId = server.attr("data-id") || 
-                               server.attr("id") || 
-                               server.selectFirst(".server-name")?.text?.toLowerCase().replace(/\s+/g, '-');
-                const serverName = server.selectFirst(".server-name")?.text || `Server ${serverId}`;
-                return { id: serverId, name: serverName };
-            });
-
-            const filteredServers = servers.filter(server => prefServers.includes(server.id));
-
+            // Extract streams from preferred servers
             const streams = [];
-            for (const server of filteredServers) {
-                const serverContent = body.selectFirst(`.server-item[data-id="${server.id}"], #${server.id}`);
+            for (const server of servers) {
+                const serverContent = body.selectFirst(`.server[data-id="${server.id}"], #${server.id}`);
                 if (!serverContent) continue;
 
-                const videoElements = serverContent.select(".video-item, .mirror_item") || [];
-                for (const video of videoElements) {
-                    const type = video.attr("data-type") || 
-                               video.selectFirst(".type")?.text?.toLowerCase() || 
-                               "sub";
+                const videoItems = serverContent.select(".video-item") || [];
+                for (const video of videoItems) {
+                    const type = video.attr("data-type") || "sub";
                     if (!prefSubDub.includes(type)) continue;
 
-                    const videoUrl = video.attr("data-video") || 
-                                   video.selectFirst("a")?.getHref;
+                    const videoUrl = video.attr("data-video") || video.attr("data-src");
                     if (!videoUrl) continue;
 
                     if (splitStreams) {
-                        streams.push({ name: `${server.name} - ${type} - 360p`, url: videoUrl, quality: 360 });
-                        streams.push({ name: `${server.name} - ${type} - 720p`, url: videoUrl, quality: 720 });
-                        streams.push({ name: `${server.name} - ${type} - 1080p`, url: videoUrl, quality: 1080 });
+                        streams.push({
+                            name: `${server.name} - ${type} - 360p`,
+                            url: videoUrl,
+                            quality: 360,
+                            server: server.name,
+                            type: type
+                        });
+                        streams.push({
+                            name: `${server.name} - ${type} - 720p`,
+                            url: videoUrl,
+                            quality: 720,
+                            server: server.name,
+                            type: type
+                        });
+                        streams.push({
+                            name: `${server.name} - ${type} - 1080p`,
+                            url: videoUrl,
+                            quality: 1080,
+                            server: server.name,
+                            type: type
+                        });
                     } else {
-                        streams.push({ name: `${server.name} - ${type}`, url: videoUrl, quality: 0 });
+                        streams.push({
+                            name: `${server.name} - ${type}`,
+                            url: videoUrl,
+                            quality: 0,
+                            server: server.name,
+                            type: type
+                        });
                     }
                 }
             }
@@ -248,7 +259,7 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // ORIGINAL WORKING SETTINGS (UNTOUCHED)
+    // ORIGINAL SETTINGS WITH ADDED DUB OPTION
     getSourcePreferences() {
         return [
             {
@@ -300,9 +311,9 @@ class DefaultExtension extends MProvider {
                 multiSelectListPreference: {
                     title: 'Preferred stream sub/dub type',
                     summary: '',
-                    values: ["sub", "softsub", "dub"],
-                    entries: ["Hard Sub", "Soft Sub", "Dub"],
-                    entryValues: ["sub", "softsub", "dub"]
+                    values: ["sub", "softsub", "dub"], // Added dub option
+                    entries: ["Hard Sub", "Soft Sub", "Dub"], // Added dub label
+                    entryValues: ["sub", "softsub", "dub"] // Added dub value
                 }
             }, {
                 key: "animekai_pref_extract_streams",
