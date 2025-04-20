@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animekai.to/",
     "typeSource": "single",
     "itemType": 1,
-    "version": "1.0.3",
+    "version": "1.0.4",
     "pkgPath": "anime/src/en/animekai.js"
 }];
 
@@ -24,10 +24,10 @@ class DefaultExtension extends MProvider {
         return this.getPreference("animekai_base_url") || "https://animekai.to";
     }
 
-    async request(url, options = {}) {
+    async request(url) {
         try {
             const fullUrl = url.startsWith("http") ? url : this.getBaseUrl() + url;
-            const res = await this.client.get(fullUrl, options);
+            const res = await this.client.get(fullUrl);
             return res.body;
         } catch (error) {
             console.error("Request failed:", error);
@@ -40,7 +40,7 @@ class DefaultExtension extends MProvider {
         return new Document(res);
     }
 
-    // ORIGINAL SEARCH FUNCTION (WORKING VERSION)
+    // WORKING SEARCH FUNCTION (ORIGINAL VERSION)
     async search(query, page, filters) {
         try {
             const filterValues = {
@@ -120,49 +120,51 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // ANIMEPAHE-STYLE DETAIL FETCHING ADAPTED FOR ANIMEKAI
+    // IMPROVED EPISODE FETCHING
     async getDetail(url) {
         try {
             const doc = await this.getPage(url);
             if (!doc) return null;
 
-            const title = doc.selectFirst("h1.title")?.text || 
-                         doc.selectFirst(".anime-title")?.text;
+            const titlePref = this.getPreference("animekai_title_lang") || "title";
+            const title = doc.selectFirst("h1.title, .anime-detail h1")?.attr(titlePref) || 
+                        doc.selectFirst("h1.title, .anime-detail h1")?.text;
             
-            const cover = doc.selectFirst("img.cover")?.attr("src") ||
-                         doc.selectFirst(".anime-poster img")?.attr("src");
-            
-            const description = doc.selectFirst(".description")?.text || 
-                             doc.selectFirst(".anime-synopsis")?.text;
+            const cover = doc.selectFirst("img.cover, .anime-cover img")?.attr("src");
+            const description = doc.selectFirst(".description, .anime-synopsis")?.text;
 
-            // AnimePahe-style episode list extraction
-            const episodes = [];
-            const episodeElements = doc.select(".episode-list li, .episode-wrap");
-            
-            episodeElements.forEach((element, index) => {
-                const epNum = parseInt(element.attr("data-number") || 
-                             element.selectFirst(".episode-num")?.text?.match(/\d+/)?.[0] || 
-                             (index + 1));
-                
-                const epUrl = element.selectFirst("a")?.getHref || 
-                            `${url}/episode/${epNum}`;
-                
-                const epName = element.selectFirst(".episode-title")?.text || 
-                             `Episode ${epNum}`;
-                
-                const epThumb = element.selectFirst("img")?.attr("src") || 
-                              element.selectFirst("img")?.attr("data-src") || 
-                              cover;
+            // Multiple selector patterns for episode detection
+            const episodeContainers = [
+                ".episode-list",
+                ".episodes-wrapper",
+                ".eplister"
+            ].map(selector => doc.selectFirst(selector)).filter(Boolean);
 
-                if (epUrl) {
-                    episodes.push({
+            let episodes = [];
+            for (const container of episodeContainers) {
+                const items = container.select(".episode-item, li");
+                episodes = items.map((item, index) => {
+                    const epNum = parseInt(
+                        item.attr("data-number") || 
+                        item.selectFirst(".episode-number")?.text?.match(/\d+/)?.[0] || 
+                        (index + 1)
+                    );
+                    const epUrl = item.selectFirst("a")?.getHref || `${url}/episode/${epNum}`;
+                    const epName = item.selectFirst(".episode-title")?.text || `Episode ${epNum}`;
+                    const epThumb = item.selectFirst("img")?.attr("src") || 
+                                   item.selectFirst("img")?.attr("data-src") || 
+                                   cover;
+
+                    return {
                         name: epName,
                         url: epUrl,
                         episode: epNum,
                         thumbnailUrl: epThumb
-                    });
-                }
-            });
+                    };
+                }).filter(ep => ep.url);
+                
+                if (episodes.length > 0) break;
+            }
 
             return {
                 name: title,
@@ -176,32 +178,41 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // ANIMEPAHE-STYLE VIDEO FETCHING ADAPTED FOR ANIMEKAI
+    // IMPROVED VIDEO SOURCE EXTRACTION WITH DUB SUPPORT
     async getVideoList(url) {
         try {
             const doc = await this.getPage(url);
             if (!doc) return [];
 
-            const servers = doc.select(".server-list li, .server-item").map(server => ({
-                id: server.attr("data-id") || server.attr("id")?.replace("server-", "") || "default",
-                name: server.selectFirst(".server-name")?.text?.trim() || "Default",
-                element: server
-            }));
-
             const prefServers = this.getPreference("animekai_pref_stream_server") || ["1"];
             const prefSubDub = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub"];
             const splitStreams = this.getPreference("animekai_pref_extract_streams") !== false;
 
-            const streams = [];
-            
-            for (const server of servers) {
-                if (!prefServers.includes(server.id)) continue;
+            // Multiple selector patterns for server detection
+            const serverContainers = [
+                ".server-list",
+                ".servers-tab",
+                ".server-selector"
+            ].map(selector => doc.selectFirst(selector)).filter(Boolean);
+
+            let servers = [];
+            for (const container of serverContainers) {
+                servers = container.select(".server-item, li").map(server => ({
+                    id: server.attr("data-id") || server.attr("id")?.replace("server-", "") || "default",
+                    name: server.selectFirst(".server-name")?.text?.trim() || "Default",
+                    element: server
+                })).filter(s => s.id);
                 
-                const videoItems = server.element.select(".video-item, .mirror_item");
+                if (servers.length > 0) break;
+            }
+
+            const streams = [];
+            for (const server of servers.filter(s => prefServers.includes(s.id))) {
+                const videoItems = server.element.select(".video-item, [data-video]");
                 for (const video of videoItems) {
                     const type = (video.attr("data-type") || "sub").toLowerCase();
                     if (!prefSubDub.includes(type)) continue;
-                    
+
                     const videoUrl = video.attr("data-video") || 
                                    video.attr("data-src") || 
                                    video.selectFirst("iframe")?.attr("src");
@@ -240,7 +251,7 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // ORIGINAL SETTINGS (UNCHANGED)
+    // SETTINGS WITH ADDED DUB OPTION (ORIGINAL + DUB)
     getSourcePreferences() {
         return [
             {
@@ -292,9 +303,9 @@ class DefaultExtension extends MProvider {
                 multiSelectListPreference: {
                     title: 'Preferred stream sub/dub type',
                     summary: '',
-                    values: ["sub", "softsub", "dub"],
-                    entries: ["Hard Sub", "Soft Sub", "Dub"],
-                    entryValues: ["sub", "softsub", "dub"]
+                    values: ["sub", "dub"], // Added dub option
+                    entries: ["Sub", "Dub"], // Simplified options
+                    entryValues: ["sub", "dub"]
                 }
             }, {
                 key: "animekai_pref_extract_streams",
