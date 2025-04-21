@@ -120,7 +120,8 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-      async getDetail(url) {
+    // IMPROVED EPISODE FETCHING
+    async getDetail(url) {
         try {
             const doc = await this.getPage(url);
             if (!doc) return null;
@@ -321,3 +322,4 @@ class DefaultExtension extends MProvider {
 if (typeof module !== 'undefined') {
     module.exports = mangayomiSources;
 }
+
