@@ -120,8 +120,7 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // IMPROVED EPISODE FETCHING
-    async getDetail(url) {
+      async getDetail(url) {
         try {
             const doc = await this.getPage(url);
             if (!doc) return null;
