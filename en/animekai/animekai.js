@@ -22,7 +22,6 @@ class DefaultExtension extends MProvider {
 
     getBaseUrl() {
         return this.getPreference("animekai_base_url");
-
     }
 
     async request(slug) {
@@ -39,7 +38,6 @@ class DefaultExtension extends MProvider {
     }
 
     async searchPage({ query = "", type = [], genre = [], status = [], sort = "", season = [], year = [], rating = [], country = [], language = [], page = 1 } = {}) {
-
         function bundleSlug(category, items) {
             var rd = ""
             for (var item of items) {
@@ -49,23 +47,20 @@ class DefaultExtension extends MProvider {
         }
 
         var slug = "/browser?"
-
         slug += "keyword=" + query;
         slug += bundleSlug("type", type);
         slug += bundleSlug("genre", genre);
-        slug += bundleSlug("status", status);
         slug += bundleSlug("status", status);
         slug += bundleSlug("season", season);
         slug += bundleSlug("year", year);
         slug += bundleSlug("rating", rating);
         slug += bundleSlug("country", country);
         slug += bundleSlug("language", language);
-        sort = sort.length < 1 ? "updated_date" : sort// default sort is updated date
+        sort = sort.length < 1 ? "updated_date" : sort
         slug += "&sort=" + sort;
         slug += `&page=${page}`;
 
         var list = []
-
         var body = await this.getPage(slug);
 
         var paginations = body.select(".pagination > li")
@@ -94,7 +89,13 @@ class DefaultExtension extends MProvider {
     }
 
     async search(query, page, filters) {
+        // Provide default empty filters if none are provided
+        if (!filters || !Array.isArray(filters)) {
+            filters = this.getFilterList();
+        }
+
         function getFilter(state) {
+            if (!state) return [];
             var rd = []
             state.forEach(item => {
                 if (item.state) {
@@ -102,19 +103,56 @@ class DefaultExtension extends MProvider {
                 }
             })
             return rd
-
         }
-        var type = getFilter(filters[0].state)
-        var genre = getFilter(filters[1].state)
-        var status = getFilter(filters[2].state)
-        var sort = filters[3].values[filters[3].state].value
-        var season = getFilter(filters[4].state)
-        var year = getFilter(filters[5].state)
-        var rating = getFilter(filters[6].state)
-        var country = getFilter(filters[7].state)
-        var language = getFilter(filters[8].state)
-        return await this.searchPage({ query, type, genre, status, sort, season, year, rating, country, language, page });
+
+        // Safely get each filter with fallback to empty array
+        var type = getFilter(filters[0]?.state)
+        var genre = getFilter(filters[1]?.state)
+        var status = getFilter(filters[2]?.state)
+        var sort = filters[3]?.values?.[filters[3]?.state]?.value || "updated_date"
+        var season = getFilter(filters[4]?.state)
+        var year = getFilter(filters[5]?.state)
+        var rating = getFilter(filters[6]?.state)
+        var country = getFilter(filters[7]?.state)
+        var language = getFilter(filters[8]?.state)
+        
+        return await this.searchPage({ 
+            query, 
+            type, 
+            genre, 
+            status, 
+            sort, 
+            season, 
+            year, 
+            rating, 
+            country, 
+            language, 
+            page 
+        });
     }
+
+    // [Rest of your existing methods remain exactly the same...]
+    // getDetail()
+    // getVideoList()
+    // getFilterList()
+    // getSourcePreferences()
+    // formatSubtitles()
+    // formatStreams()
+    // getMegaUrl()
+    // decryptMegaEmbed()
+    // base64UrlDecode()
+    // base64UrlEncode()
+    // transform()
+    // reverseString()
+    // substitute()
+    // getDecoderPattern()
+    // patternExecutor()
+    // kaiEncrypt()
+    // kaiDecrypt()
+    // megaDecrypt()
+}
+
+// [Rest of your existing code remains the same...]
 
     async getDetail(url) {
         function statusCode(status) {
