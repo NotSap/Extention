@@ -233,130 +233,111 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    async getVideoList(url) {
+async getVideoList(url) {
     try {
         var streams = [];
-        var prefServer = this.getPreference("animekai_pref_stream_server") || ["1", "2", "3"]; // Try more servers by default
-        var prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub", "softsub"]; // Try all types
+        var prefServer = this.getPreference("animekai_pref_stream_server") || ["1", "2", "3"];
+        var prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub"];
         
         var epSlug = url.split("||");
         var isUncensoredVersion = false;
 
         for (var epId of epSlug) {
-            // Try multiple API endpoints
-            var endpoints = [
-                `/ajax/links/list?token=${epId}&_=`,
-                `/ajax/server/list/${epId}?_=`,
-                `/ajax/v2/episode/servers?episodeId=${epId}&_=`
-            ];
-            
-            var body;
-            for (var endpoint of endpoints) {
-                try {
-                    var token = await this.kaiEncrypt(epId);
-                    var res = await this.request(endpoint + token);
-                    if (res) {
-                        body = JSON.parse(res);
-                        if (body.status == 200 || body.html) break; // Some endpoints return html instead of status
-                    }
-                } catch (e) {
-                    console.log(`Failed endpoint ${endpoint}`, e);
-                }
-            }
-            
-            if (!body || (!body.status && !body.html)) continue;
+            var token = await this.kaiEncrypt(epId);
+            var res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
+            if (!res) continue;
 
-            // Handle different response formats
-            var serverHtml = body.html || body.result;
-            var serverResult = new Document(serverHtml);
-            
-            // More comprehensive server detection
-            var serverContainers = serverResult.select(`
-                div.server-items, 
-                .server-list, 
-                .server-tab, 
-                div[data-id], 
-                .servers-dub, 
-                .servers-sub,
-                ul.episode-servers
-            `) || [];
+            var body = JSON.parse(res);
+            if (body.status != 200) continue;
 
+            var serverResult = new Document(body.result);
             var SERVERDATA = [];
-            for (var container of serverContainers) {
-                var dubType = container.attr("data-id") || 
-                             container.className.includes("dub") ? "dub" : "sub";
-                
+            
+            // Improved server type detection
+            var serverItems = serverResult.select("div.server-items") || [];
+            for (var dubSection of serverItems) {
+                var dubType = dubSection.attr("data-id");
+                if (!dubType) {
+                    // Fallback type detection based on class names
+                    if (dubSection.className.includes("dub")) {
+                        dubType = "dub";
+                    } else if (dubSection.className.includes("sub")) {
+                        dubType = "sub";
+                    } else {
+                        dubType = "sub"; // Default to sub if unknown
+                    }
+                }
+
+                // Only process preferred types
                 if (!prefDubType.includes(dubType)) continue;
 
-                // Find all possible server elements
-                var serverElements = container.select(`
-                    span.server, 
-                    .server-item, 
-                    [data-lid], 
-                    li, 
-                    .server-name,
-                    .btn-server
-                `) || [];
-
-                for (var server of serverElements) {
-                    var serverName = server.text?.trim() || "Server";
-                    var serverNum = serverName.replace("Server ", "").match(/\d+/)?.[0] || 
-                                  server.attr("data-id") || 
-                                  server.attr("id")?.replace("server-", "") || 
-                                  "1";
-
+                var serverElements = dubSection.select("span.server") || [];
+                for (var ser of serverElements) {
+                    var serverName = ser.text.trim();
+                    var serverNum = serverName.replace("Server ", "");
                     if (!prefServer.includes(serverNum)) continue;
 
-                    var dataId = server.attr("data-lid") || 
-                                server.attr("data-id") || 
-                                server.attr("data-embed-id") ||
-                                server.attr("href")?.match(/id=([^&]+)/)?.[1];
-                    
+                    var dataId = ser.attr("data-lid");
                     if (dataId) {
                         SERVERDATA.push({
-                            serverName: `Server ${serverNum}`,
+                            serverName: serverName,
                             dataId: dataId,
-                            dubType: dubType
+                            dubType: dubType.toLowerCase() // Ensure consistent casing
                         });
                     }
                 }
             }
 
-            // Process found servers
+            // Process each valid server
             for (var serverData of SERVERDATA) {
                 try {
+                    var dubType = serverData.dubType === "sub" ? "SUB" : "DUB";
+                    if (isUncensoredVersion) {
+                        dubType += " [Uncensored]";
+                    }
+
                     var megaUrl = await this.getMegaUrl(serverData.dataId);
                     if (!megaUrl) continue;
 
-                    var serverStreams = await this.decryptMegaEmbed(
-                        megaUrl, 
-                        serverData.serverName, 
-                        serverData.dubType.toUpperCase() + 
-                        (isUncensoredVersion ? " [Uncensored]" : "")
-                    );
-
-                    if (serverStreams?.length > 0) {
-                        streams.push(...serverStreams);
+                    var serverStreams = await this.decryptMegaEmbed(megaUrl, serverData.serverName, dubType);
+                    if (serverStreams && serverStreams.length > 0) {
+                        streams = [...streams, ...serverStreams];
+                        
+                        // Handle subtitles for DUB episodes
+                        if (dubType.includes("DUB") && megaUrl.includes("sub.list=")) {
+                            try {
+                                var subList = megaUrl.split("sub.list=")[1];
+                                var subres = await this.client.get(subList);
+                                var subtitles = JSON.parse(subres.body);
+                                var subs = this.formatSubtitles(subtitles, dubType);
+                                if (streams.length > 0) {
+                                    streams[streams.length - 1].subtitles = subs;
+                                }
+                            } catch (e) {
+                                console.error("Subtitle load error:", e);
+                            }
+                        }
                     }
                 } catch (e) {
-                    console.error("Server processing failed:", e);
+                    console.error("Server processing error:", e);
                 }
             }
             isUncensoredVersion = true;
         }
 
-        return streams.length > 0 ? streams : [{ 
-            url: "", 
-            name: "No streams found - try changing server preferences or check directly on AnimeKai" 
+        return streams.length > 0 ? streams : [{
+            url: "",
+            name: "No streams available - try changing server preferences"
         }];
     } catch (error) {
         console.error("Video list error:", error);
-        return [{ 
-            url: "", 
-            name: "Error loading - try again later or check AnimeKai directly" 
+        return [{
+            url: "",
+            name: "Error loading streams - try again later"
         }];
     }
 }
+
 
     formatSubtitles(subtitles, dubType) {
         var subs = [];
