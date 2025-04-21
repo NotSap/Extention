@@ -40,7 +40,6 @@ class DefaultExtension extends MProvider {
         return res ? new Document(res) : null;
     }
 
-    // WORKING SEARCH FUNCTION (FROM YOUR SECOND CODE)
     async search(query, page, filters) {
         try {
             const filterValues = {
@@ -120,7 +119,6 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // DETAIL FETCHING FROM YOUR FIRST 700+ LINE CODE
     async getDetail(url) {
         function statusCode(status) {
             return {
@@ -235,42 +233,63 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // VIDEO LIST FETCHING FROM YOUR FIRST 700+ LINE CODE
     async getVideoList(url) {
         try {
             var streams = [];
-            var prefServer = this.getPreference("animekai_pref_stream_server") || ["1"];
-            var prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub"];
-
+            var prefServer = this.getPreference("animekai_pref_stream_server") || ["1", "2"]; // Default to both servers
+            var prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub"]; // Default to both
+            
             var epSlug = url.split("||");
-
             var isUncensoredVersion = false;
-            for (var epId of epSlug) {
-                var token = await this.kaiEncrypt(epId);
-                var res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
-                if (!res) continue;
 
-                var body = JSON.parse(res);
-                if (body.status != 200) continue;
+            for (var epId of epSlug) {
+                // Try multiple endpoints if first one fails
+                var endpoints = [
+                    `/ajax/links/list?token=${epId}&_=`,
+                    `/ajax/server/list/${epId}?_=`
+                ];
+                
+                var body;
+                for (var endpoint of endpoints) {
+                    var token = await this.kaiEncrypt(epId);
+                    var res = await this.request(endpoint + token);
+                    if (res) {
+                        body = JSON.parse(res);
+                        if (body.status == 200) break;
+                    }
+                }
+                if (!body || body.status != 200) continue;
 
                 var serverResult = new Document(body.result);
                 var SERVERDATA = [];
-                var server_items = serverResult.select("div.server-items") || [];
-
-                for (var dubSection of server_items) {
-                    var dubType = dubSection.attr("data-id");
+                
+                // More flexible server detection
+                var serverContainers = serverResult.select("div.server-items, .server-list, .server-tab, div[data-id]") || [];
+                for (var container of serverContainers) {
+                    var dubType = container.attr("data-id") || "sub";
                     if (!prefDubType.includes(dubType)) continue;
 
-                    for (var ser of dubSection.select("span.server")) {
-                        var serverName = ser.text;
-                        if (!prefServer.includes(serverName.replace("Server ", ""))) continue;
+                    var serverElements = container.select("span.server, .server-item, [data-lid]") || [];
+                    for (var server of serverElements) {
+                        var serverName = server.text?.trim() || "Server";
+                        var serverNum = serverName.replace("Server ", "");
+                        
+                        if (!serverNum.match(/^\d+$/)) {
+                            serverNum = server.attr("data-id") || 
+                                        server.attr("id")?.replace("server-", "") || 
+                                        "1";
+                        }
 
-                        var dataId = ser.attr("data-lid");
-                        SERVERDATA.push({
-                            serverName,
-                            dataId,
-                            dubType
-                        });
+                        if (!prefServer.includes(serverNum)) continue;
+
+                        var dataId = server.attr("data-lid") || server.attr("data-id");
+                        if (dataId) {
+                            SERVERDATA.push({
+                                serverName: `Server ${serverNum}`,
+                                dataId: dataId,
+                                dubType: dubType
+                            });
+                        }
                     }
                 }
 
@@ -285,31 +304,34 @@ class DefaultExtension extends MProvider {
                     if (!megaUrl) continue;
 
                     var serverStreams = await this.decryptMegaEmbed(megaUrl, serverName, dubType);
-                    streams = [...streams, ...serverStreams];
+                    if (serverStreams && serverStreams.length > 0) {
+                        streams = [...streams, ...serverStreams];
+                    }
 
-                    if (dubType.includes("DUB")) {
-                        if (!megaUrl.includes("sub.list=")) continue;
-                        var subList = megaUrl.split("sub.list=")[1];
-
-                        var subres = await this.client.get(subList);
-                        var subtitles = JSON.parse(subres.body);
-                        var subs = this.formatSubtitles(subtitles, dubType);
-                        if (streams.length > 0) {
-                            streams[streams.length - 1].subtitles = subs;
+                    if (dubType.includes("DUB") && megaUrl.includes("sub.list=")) {
+                        try {
+                            var subList = megaUrl.split("sub.list=")[1];
+                            var subres = await this.client.get(subList);
+                            var subtitles = JSON.parse(subres.body);
+                            var subs = this.formatSubtitles(subtitles, dubType);
+                            if (streams.length > 0) {
+                                streams[streams.length - 1].subtitles = subs;
+                            }
+                        } catch (e) {
+                            console.error("Failed to get subtitles:", e);
                         }
                     }
                 }
                 isUncensoredVersion = true;
             }
 
-            return streams;
+            return streams.length > 0 ? streams : [{ url: "", name: "No streams found - try changing server preferences" }];
         } catch (error) {
             console.error("Failed to get video list:", error);
-            return [];
+            return [{ url: "", name: "Error loading streams - try again later" }];
         }
     }
 
-    // REMAINING UTILITY FUNCTIONS FROM YOUR FIRST 700+ LINE CODE
     formatSubtitles(subtitles, dubType) {
         var subs = [];
         subtitles.forEach(sub => {
@@ -383,7 +405,6 @@ class DefaultExtension extends MProvider {
         return await this.formatStreams(url, serverName, dubType);
     }
 
-    // DECODER FUNCTIONS FROM YOUR FIRST 700+ LINE CODE
     base64UrlDecode(input) {
         let base64 = input
             .replace(/-/g, "+")
@@ -516,7 +537,6 @@ class DefaultExtension extends MProvider {
         return JSON.parse(streamData);
     }
 
-    // FILTER LIST FROM YOUR FIRST 700+ LINE CODE
     getFilterList() {
         function formateState(type_name, items, values) {
             var state = [];
@@ -641,7 +661,6 @@ class DefaultExtension extends MProvider {
         return filters;
     }
 
-    // SETTINGS FROM YOUR FIRST 700+ LINE CODE
     getSourcePreferences() {
         return [
             {
