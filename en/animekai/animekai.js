@@ -121,143 +121,138 @@ class DefaultExtension extends MProvider {
 
     async getDetail(url) {
     try {
-        // First try the standard detail page
-        let body = await this.getPage(url);
-        if (!body) return null;
-
-        // Check if this is a special case like Re:Zero
-        const isReZero = body.text().includes("Re:ZERO") || url.includes("rezero");
-
-        // Get anime ID - try multiple selectors
-        let animeId = body.selectFirst("#anime-rating")?.attr("data-id") || 
-                     body.selectFirst("[data-anime-id]")?.attr("data-anime-id") ||
-                     url.split('/').pop();
-
-        // Special handling for Re:Zero if needed
-        if (isReZero && !animeId) {
-            animeId = await this.getReZeroSeasonId(url);
+        // 1. Load the anime page
+        const body = await this.getPage(url);
+        if (!body) {
+            console.error("Failed to load anime page");
+            return null;
         }
 
+        // 2. Extract anime ID using multiple reliable methods
+        const animeId = await this.extractUniversalAnimeId(body, url);
         if (!animeId) {
             console.error("Could not determine anime ID");
-            return null;
+            return this.scrapeFallbackDetails(body, url); // Full fallback
         }
 
-        // Get episode list
-        const token = await this.kaiEncrypt(animeId);
-        const res = await this.request(`/ajax/episodes/list?ani_id=${animeId}&_=${token}`);
-        
-        if (!res) {
-            console.error("No response for episodes");
-            return null;
+        // 3. Get episodes through multiple possible endpoints
+        const episodes = await this.fetchUniversalEpisodes(animeId, body);
+        if (episodes.length === 0) {
+            console.log("Falling back to direct scraping");
+            return this.scrapeFallbackDetails(body, url);
         }
 
-        const episodeData = JSON.parse(res);
-        if (episodeData.status !== 200) {
-            console.error("Episode API error:", episodeData);
-            return null;
-        }
-
-        const doc = new Document(episodeData.result);
-        const episodes = doc.selectFirst("div.eplist.titles")?.select("li") || [];
-        const showUncenEp = this.getPreference("animekai_show_uncen_epsiodes");
-
-        const chapters = [];
-        for (const item of episodes) {
-            const aTag = item.selectFirst("a");
-            if (!aTag) continue;
-
-            const num = parseInt(aTag.attr("num"));
-            const title = aTag.selectFirst("span")?.text;
-            const formattedTitle = title?.includes("Episode") ? "" : `: ${title}`;
-            const epName = `Episode ${num}${formattedTitle}`;
-
-            const langs = aTag.attr("langs");
-            const scanlator = langs === "1" ? "SUB" : "SUB, DUB";
-            const token = aTag.attr("token");
-
-            let epData = {
-                name: epName,
-                url: token,
-                scanlator
-            };
-
-            const slug = aTag.attr("slug");
-            if (slug?.includes("uncen")) {
-                if (!showUncenEp) continue;
-
-                epData = {
-                    name: `Episode ${num}: (Uncensored)`,
-                    url: token,
-                    scanlator: scanlator + ", UNCENSORED"
-                };
-
-                const existing = chapters[num - 1];
-                if (existing) {
-                    existing.url += "||" + epData.url;
-                    existing.scanlator += ", " + epData.scanlator;
-                    continue;
-                }
-            }
-            chapters.push(epData);
-        }
-
-        // Get basic info
-        const titlePref = this.getPreference("animekai_title_lang") || "title";
-        const mainSection = body.selectFirst(".watch-section") || body;
-        
+        // 4. Get consistent metadata
         return {
-            name: mainSection.selectFirst("h1, .title")?.attr(titlePref) || 
-                 mainSection.selectFirst("h1, .title")?.text,
-            imageUrl: mainSection.selectFirst("img.poster, img.cover")?.attr("src"),
-            link: this.getBaseUrl() + url,
-            description: mainSection.selectFirst(".desc, .synopsis")?.text,
-            genre: mainSection.select(".genre, .tags")?.map(el => el.text.trim()) || [],
-            status: 1, // Default to completed
-            chapters: chapters.reverse()
+            ...this.extractStandardMetadata(body),
+            chapters: episodes
         };
 
     } catch (error) {
-        console.error("Detail error:", error);
+        console.error("getDetail error:", error);
         return null;
     }
 }
 
-async getReZeroSeasonId(url) {
-    try {
-        // Special handling for Re:Zero seasons
-        const body = await this.getPage(url);
-        if (!body) return null;
-
-        // Try to find season ID in page scripts
-        const scripts = body.select("script");
-        for (const script of scripts) {
-            const text = script.text;
-            const match = text.match(/anime_id["']?\s*[:=]\s*["']?(\d+)/);
-            if (match) return match[1];
+// Universal ID extraction that works for all anime
+async extractUniversalAnimeId(body, url) {
+    // Method 1: Check common data attributes
+    const idSelectors = [
+        "#anime-rating[data-id]", 
+        "[data-anime-id]", 
+        "[data-id]", 
+        ".anime-info[data-anime]"
+    ];
+    
+    for (const selector of idSelectors) {
+        const el = body.selectFirst(selector);
+        if (el) {
+            return el.attr("data-id") || 
+                   el.attr("data-anime-id") || 
+                   el.attr("data-anime");
         }
-
-        // Fallback to search API if needed
-        const searchRes = await this.request(`/ajax/search?keyword=re:zero`);
-        if (searchRes) {
-            const data = JSON.parse(searchRes);
-            if (data.status === 200) {
-                const doc = new Document(data.result);
-                const items = doc.select(".aitem");
-                for (const item of items) {
-                    if (item.text().includes("Season 3")) {
-                        return item.selectFirst("a")?.getHref?.split('/').pop();
-                    }
-                }
-            }
-        }
-        return null;
-    } catch (e) {
-        console.error("Re:Zero ID error:", e);
-        return null;
     }
+
+    // Method 2: Check scripts for ID patterns
+    const scripts = body.select("script:not([src])");
+    for (const script of scripts) {
+        const matches = script.text.match(/(?:anime|series)_?id["']?\s*[:=]\s*["']?(\d+)/);
+        if (matches) return matches[1];
+    }
+
+    // Method 3: Extract from URL as last resort
+    return url.split('/').filter(segment => segment && !isNaN(segment)).pop();
 }
+
+// Universal episode fetching
+async fetchUniversalEpisodes(animeId, body) {
+    const endpoints = [
+        `/ajax/episode/list?anime_id=${animeId}`,
+        `/ajax/v2/episode/list?anime_id=${animeId}`,
+        `/ajax/v1/episodes?id=${animeId}`
+    ];
+
+    for (const endpoint of endpoints) {
+        try {
+            const token = await this.kaiEncrypt(animeId);
+            const res = await this.request(`${endpoint}&_=${token}`);
+            if (!res) continue;
+
+            const data = JSON.parse(res);
+            const html = data.html || data.result || data.episodes;
+            if (!html) continue;
+
+            const doc = new Document(html);
+            const items = doc.select(".episode-list li, .episode-item, [data-episode-id]");
+
+            return items.map(item => ({
+                name: item.selectFirst(".episode-title")?.text || 
+                     `Episode ${item.attr("data-episode-num") || "1"}`,
+                url: item.selectFirst("a")?.getHref || 
+                    item.attr("data-episode-url") ||
+                    `${animeId}/${item.attr("data-episode-num") || "1"}`,
+                episode: parseInt(item.attr("data-episode-num")) || 
+                        parseInt(item.selectFirst(".episode-num")?.text) ||
+                        0
+            })).filter(ep => ep.url).reverse();
+
+        } catch (e) {
+            console.error(`Endpoint ${endpoint} failed:`, e);
+        }
     }
+    return [];
+}
+
+// Complete fallback when nothing else works
+scrapeFallbackDetails(body, url) {
+    const episodeContainer = body.selectFirst(".episode-list, .episodes-container, .eplist");
+    const episodes = episodeContainer ? 
+        episodeContainer.select("li, .episode").map((item, i) => ({
+            name: item.selectFirst(".title")?.text || `Episode ${i + 1}`,
+            url: item.selectFirst("a")?.getHref || `${url}/${i + 1}`,
+            episode: i + 1
+        })) : [];
+
+    return {
+        ...this.extractStandardMetadata(body),
+        chapters: episodes.reverse()
+    };
+}
+
+// Consistent metadata extraction
+extractStandardMetadata(body) {
+    const titleEl = body.selectFirst("h1.title, h1, .anime-title");
+    const descEl = body.selectFirst(".description, .synopsis, .anime-desc");
+    const coverEl = body.selectFirst(".cover, .poster, .anime-cover img");
+
+    return {
+        name: titleEl?.text?.trim(),
+        description: descEl?.text?.trim(),
+        imageUrl: coverEl?.attr("src"),
+        genre: body.select(".genre, .tag, .anime-genre")?.map(el => el.text.trim()) || [],
+        status: 1
+    };
+}
 
 async getVideoList(url) {
     try {
