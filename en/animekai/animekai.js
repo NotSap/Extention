@@ -235,122 +235,185 @@ class DefaultExtension extends MProvider {
 
 async getVideoList(url) {
     try {
-        var streams = [];
-        var prefServer = this.getPreference("animekai_pref_stream_server") || ["1", "2", "3"];
-        var prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub"];
+        const streams = [];
+        // Default to all servers and types if preferences not set
+        const prefServer = this.getPreference("animekai_pref_stream_server") || ["1", "2", "3"];
+        const prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "softsub", "dub"];
         
-        var epSlug = url.split("||");
-        var isUncensoredVersion = false;
+        const epSlug = url.split("||");
+        let isUncensoredVersion = false;
 
-        for (var epId of epSlug) {
-            var token = await this.kaiEncrypt(epId);
-            var res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
+        for (const epId of epSlug) {
+            const token = await this.kaiEncrypt(epId);
+            const res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
             if (!res) continue;
 
-            var body = JSON.parse(res);
+            const body = JSON.parse(res);
             if (body.status != 200) continue;
 
-            var serverResult = new Document(body.result);
-            var SERVERDATA = [];
+            const serverResult = new Document(body.result);
+            const SERVERDATA = [];
             
-            // Improved server type detection
-            var serverItems = serverResult.select("div.server-items") || [];
-            for (var dubSection of serverItems) {
-                var dubType = dubSection.attr("data-id");
-                if (!dubType) {
-                    // Fallback type detection based on class names
-                    if (dubSection.className.includes("dub")) {
-                        dubType = "dub";
-                    } else if (dubSection.className.includes("sub")) {
-                        dubType = "sub";
-                    } else {
-                        dubType = "sub"; // Default to sub if unknown
-                    }
-                }
+            // 1. First try standard server containers
+            const serverContainers = serverResult.select("div.server-items") || [];
+            for (const container of serverContainers) {
+                const streamType = container.attr("data-id")?.toLowerCase() || 
+                                 container.className.includes("dub") ? "dub" :
+                                 container.className.includes("softsub") ? "softsub" : "sub";
 
-                // Only process preferred types
-                if (!prefDubType.includes(dubType)) continue;
+                if (!prefDubType.includes(streamType)) continue;
 
-                var serverElements = dubSection.select("span.server") || [];
-                for (var ser of serverElements) {
-                    var serverName = ser.text.trim();
-                    var serverNum = serverName.replace("Server ", "");
+                const servers = container.select("span.server, .server-item") || [];
+                for (const server of servers) {
+                    const serverText = server.text.trim();
+                    const serverNum = serverText.match(/Server (\d+)/)?.[1] || 
+                                     server.attr("data-id") || 
+                                     "1";
+
                     if (!prefServer.includes(serverNum)) continue;
 
-                    var dataId = ser.attr("data-lid");
+                    const dataId = server.attr("data-lid") || server.attr("data-id");
                     if (dataId) {
                         SERVERDATA.push({
-                            serverName: serverName,
-                            dataId: dataId,
-                            dubType: dubType.toLowerCase() // Ensure consistent casing
+                            serverName: `Server ${serverNum}`,
+                            dataId,
+                            streamType,
+                            isUncensored: isUncensoredVersion
                         });
                     }
                 }
             }
 
-            // Process each valid server
-            for (var serverData of SERVERDATA) {
-                try {
-                    var dubType = serverData.dubType === "sub" ? "SUB" : "DUB";
-                    if (isUncensoredVersion) {
-                        dubType += " [Uncensored]";
-                    }
+            // 2. Fallback to alternative container selectors if no servers found
+            if (SERVERDATA.length === 0) {
+                const fallbackContainers = serverResult.select("div[data-id], .servers-container, .server-tabs") || [];
+                for (const container of fallbackContainers) {
+                    const streamType = container.attr("data-id")?.toLowerCase() || "sub";
+                    if (!prefDubType.includes(streamType)) continue;
 
-                    var megaUrl = await this.getMegaUrl(serverData.dataId);
+                    const servers = container.select("li, .server-btn, [data-server]") || [];
+                    for (const server of servers) {
+                        const serverNum = server.attr("data-server") || 
+                                         server.text.match(/\d+/)?.toString() || 
+                                         "1";
+                        
+                        if (!prefServer.includes(serverNum)) continue;
+
+                        const dataId = server.attr("data-id") || server.attr("data-lid");
+                        if (dataId) {
+                            SERVERDATA.push({
+                                serverName: `Server ${serverNum}`,
+                                dataId,
+                                streamType,
+                                isUncensored: isUncensoredVersion
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Process all found servers
+            for (const server of SERVERDATA) {
+                try {
+                    const megaUrl = await this.getMegaUrl(server.dataId);
                     if (!megaUrl) continue;
 
-                    var serverStreams = await this.decryptMegaEmbed(megaUrl, serverData.serverName, dubType);
-                    if (serverStreams && serverStreams.length > 0) {
-                        streams = [...streams, ...serverStreams];
+                    // Determine proper type label
+                    let typeLabel;
+                    switch(server.streamType) {
+                        case "sub": typeLabel = "SUB"; break;
+                        case "softsub": typeLabel = "SOFTSUB"; break;
+                        case "dub": typeLabel = "DUB"; break;
+                        default: typeLabel = "SUB";
+                    }
+                    
+                    if (server.isUncensored) {
+                        typeLabel += " [Uncensored]";
+                    }
+
+                    const serverStreams = await this.decryptMegaEmbed(
+                        megaUrl,
+                        server.serverName,
+                        typeLabel
+                    );
+
+                    if (serverStreams?.length) {
+                        streams.push(...serverStreams);
                         
-                        // Handle subtitles for DUB episodes
-                        if (dubType.includes("DUB") && megaUrl.includes("sub.list=")) {
+                        // Add subtitles for DUB streams
+                        if (server.streamType === "dub" && megaUrl.includes("sub.list=")) {
                             try {
-                                var subList = megaUrl.split("sub.list=")[1];
-                                var subres = await this.client.get(subList);
-                                var subtitles = JSON.parse(subres.body);
-                                var subs = this.formatSubtitles(subtitles, dubType);
-                                if (streams.length > 0) {
+                                const subList = megaUrl.split("sub.list=")[1];
+                                const subres = await this.client.get(subList);
+                                const subtitles = JSON.parse(subres.body);
+                                const subs = this.formatSubtitles(subtitles, typeLabel);
+                                if (streams.length) {
                                     streams[streams.length - 1].subtitles = subs;
                                 }
                             } catch (e) {
-                                console.error("Subtitle load error:", e);
+                                console.error("Subtitle error:", e);
                             }
                         }
                     }
                 } catch (e) {
-                    console.error("Server processing error:", e);
+                    console.error("Server processing failed:", server.serverName, e);
                 }
             }
             isUncensoredVersion = true;
         }
 
-        return streams.length > 0 ? streams : [{
+        // Final check if we found any streams
+        if (streams.length > 0) {
+            return streams;
+        }
+
+        // If still no streams, try direct episode page as last resort
+        const directStreams = await this.tryDirectEpisodePage(url.split("||")[0]);
+        if (directStreams.length > 0) {
+            return directStreams;
+        }
+
+        return [{
             url: "",
-            name: "No streams available - try changing server preferences"
+            name: "No servers available - Try different server/type in settings"
         }];
+
     } catch (error) {
         console.error("Video list error:", error);
         return [{
             url: "",
-            name: "Error loading streams - try again later"
+            name: "Error loading streams - Try again later"
         }];
     }
 }
 
+async tryDirectEpisodePage(epId) {
+    try {
+        const episodeUrl = `${this.getBaseUrl()}/watch/${epId}`;
+        const doc = await this.getPage(episodeUrl);
+        if (!doc) return [];
 
-    formatSubtitles(subtitles, dubType) {
-        var subs = [];
-        subtitles.forEach(sub => {
-            if (!sub.kind.includes("thumbnail")) {
-                subs.push({
-                    file: sub.file,
-                    label: `${sub.label} - ${dubType}`
+        const streams = [];
+        const videoContainers = doc.select("video, .video-container, .player-container") || [];
+        
+        for (const container of videoContainers) {
+            const src = container.attr("src") || 
+                       container.selectFirst("source")?.attr("src");
+            if (src) {
+                streams.push({
+                    url: src,
+                    name: "Direct Stream",
+                    quality: "Auto"
                 });
             }
-        });
-        return subs;
+        }
+        
+        return streams;
+    } catch (e) {
+        console.error("Direct episode fallback failed:", e);
+        return [];
     }
+}
 
     async formatStreams(sUrl, serverName, dubType) {
         function streamNamer(res) {
