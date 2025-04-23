@@ -120,656 +120,219 @@ class DefaultExtension extends MProvider {
     }
 
     async getDetail(url) {
-    try {
-        // 1. Load the anime page
-        const body = await this.getPage(url);
-        if (!body) {
-            console.error("Failed to load anime page");
-            return null;
-        }
-
-        // 2. Extract anime ID using multiple reliable methods
-        const animeId = await this.extractUniversalAnimeId(body, url);
-        if (!animeId) {
-            console.error("Could not determine anime ID");
-            return this.scrapeFallbackDetails(body, url); // Full fallback
-        }
-
-        // 3. Get episodes through multiple possible endpoints
-        const episodes = await this.fetchUniversalEpisodes(animeId, body);
-        if (episodes.length === 0) {
-            console.log("Falling back to direct scraping");
-            return this.scrapeFallbackDetails(body, url);
-        }
-
-        // 4. Get consistent metadata
-        return {
-            ...this.extractStandardMetadata(body),
-            chapters: episodes
-        };
-
-    } catch (error) {
-        console.error("getDetail error:", error);
-        return null;
-    }
-}
-
-// Universal ID extraction that works for all anime
-async extractUniversalAnimeId(body, url) {
-    // Method 1: Check common data attributes
-    const idSelectors = [
-        "#anime-rating[data-id]", 
-        "[data-anime-id]", 
-        "[data-id]", 
-        ".anime-info[data-anime]"
-    ];
-    
-    for (const selector of idSelectors) {
-        const el = body.selectFirst(selector);
-        if (el) {
-            return el.attr("data-id") || 
-                   el.attr("data-anime-id") || 
-                   el.attr("data-anime");
-        }
-    }
-
-    // Method 2: Check scripts for ID patterns
-    const scripts = body.select("script:not([src])");
-    for (const script of scripts) {
-        const matches = script.text.match(/(?:anime|series)_?id["']?\s*[:=]\s*["']?(\d+)/);
-        if (matches) return matches[1];
-    }
-
-    // Method 3: Extract from URL as last resort
-    return url.split('/').filter(segment => segment && !isNaN(segment)).pop();
-}
-
-// Universal episode fetching
-async fetchUniversalEpisodes(animeId, body) {
-    const endpoints = [
-        `/ajax/episode/list?anime_id=${animeId}`,
-        `/ajax/v2/episode/list?anime_id=${animeId}`,
-        `/ajax/v1/episodes?id=${animeId}`
-    ];
-
-    for (const endpoint of endpoints) {
         try {
-            const token = await this.kaiEncrypt(animeId);
-            const res = await this.request(`${endpoint}&_=${token}`);
-            if (!res) continue;
+            const body = await this.getPage(url);
+            if (!body) {
+                console.error("Failed to load detail page");
+                return null;
+            }
 
-            const data = JSON.parse(res);
-            const html = data.html || data.result || data.episodes;
-            if (!html) continue;
-
-            const doc = new Document(html);
-            const items = doc.select(".episode-list li, .episode-item, [data-episode-id]");
-
-            return items.map(item => ({
-                name: item.selectFirst(".episode-title")?.text || 
-                     `Episode ${item.attr("data-episode-num") || "1"}`,
-                url: item.selectFirst("a")?.getHref || 
-                    item.attr("data-episode-url") ||
-                    `${animeId}/${item.attr("data-episode-num") || "1"}`,
-                episode: parseInt(item.attr("data-episode-num")) || 
-                        parseInt(item.selectFirst(".episode-num")?.text) ||
-                        0
-            })).filter(ep => ep.url).reverse();
-
-        } catch (e) {
-            console.error(`Endpoint ${endpoint} failed:`, e);
-        }
-    }
-    return [];
-}
-
-// Complete fallback when nothing else works
-scrapeFallbackDetails(body, url) {
-    const episodeContainer = body.selectFirst(".episode-list, .episodes-container, .eplist");
-    const episodes = episodeContainer ? 
-        episodeContainer.select("li, .episode").map((item, i) => ({
-            name: item.selectFirst(".title")?.text || `Episode ${i + 1}`,
-            url: item.selectFirst("a")?.getHref || `${url}/${i + 1}`,
-            episode: i + 1
-        })) : [];
-
-    return {
-        ...this.extractStandardMetadata(body),
-        chapters: episodes.reverse()
-    };
-}
-
-// Consistent metadata extraction
-extractStandardMetadata(body) {
-    const titleEl = body.selectFirst("h1.title, h1, .anime-title");
-    const descEl = body.selectFirst(".description, .synopsis, .anime-desc");
-    const coverEl = body.selectFirst(".cover, .poster, .anime-cover img");
-
-    return {
-        name: titleEl?.text?.trim(),
-        description: descEl?.text?.trim(),
-        imageUrl: coverEl?.attr("src"),
-        genre: body.select(".genre, .tag, .anime-genre")?.map(el => el.text.trim()) || [],
-        status: 1
-    };
-}
-
-async getVideoList(url) {
-    try {
-        const streams = [];
-        const prefServer = this.getPreference("animekai_pref_stream_server") || ["1", "2", "3"];
-        const prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "softsub", "dub"];
-        
-        const epSlug = url.split("||");
-        let isUncensoredVersion = false;
-
-        for (const epId of epSlug) {
-            const token = await this.kaiEncrypt(epId);
-            const res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
-            if (!res) continue;
-
-            const body = JSON.parse(res);
-            if (body.status != 200) continue;
-
-            const serverResult = new Document(body.result);
-            const SERVERDATA = [];
-            
-            // Improved stream type detection
-            const serverContainers = serverResult.select("div.server-items") || [];
-            for (const container of serverContainers) {
-                // Get precise stream type
-                let streamType = container.attr("data-id")?.toLowerCase();
+            // First try standard method
+            const animeId = body.selectFirst("#anime-rating")?.attr("data-id");
+            if (animeId) {
+                const token = await this.kaiEncrypt(animeId);
+                const res = await this.request(`/ajax/episodes/list?ani_id=${animeId}&_=${token}`);
                 
-                // If data-id isn't clear, check container contents
-                if (!streamType || !["sub", "softsub", "dub"].includes(streamType)) {
-                    const containerText = container.text().toLowerCase();
-                    if (containerText.includes("dub")) {
-                        streamType = "dub";
-                    } else if (containerText.includes("softsub")) {
-                        streamType = "softsub";
-                    } else {
-                        streamType = "sub"; // Default to sub if unclear
+                if (res) {
+                    const data = JSON.parse(res);
+                    if (data.status === 200) {
+                        const doc = new Document(data.result);
+                        const episodes = doc.selectFirst("div.eplist.titles")?.select("li") || [];
+                        const showUncenEp = this.getPreference("animekai_show_uncen_epsiodes");
+
+                        const chapters = [];
+                        for (const item of episodes) {
+                            const aTag = item.selectFirst("a");
+                            if (!aTag) continue;
+
+                            const num = parseInt(aTag.attr("num"));
+                            const title = aTag.selectFirst("span")?.text;
+                            const epName = `Episode ${num}${title?.includes("Episode") ? "" : `: ${title}`}`;
+                            const langs = aTag.attr("langs");
+                            const scanlator = langs === "1" ? "SUB" : "SUB, DUB";
+                            const token = aTag.attr("token");
+
+                            let epData = {
+                                name: epName,
+                                url: token,
+                                scanlator
+                            };
+
+                            const slug = aTag.attr("slug");
+                            if (slug?.includes("uncen")) {
+                                if (!showUncenEp) continue;
+
+                                epData = {
+                                    name: `Episode ${num}: (Uncensored)`,
+                                    url: token,
+                                    scanlator: scanlator + ", UNCENSORED"
+                                };
+
+                                const exData = chapters[num - 1];
+                                if (exData) {
+                                    exData.url += "||" + epData.url;
+                                    exData.scanlator += ", " + epData.scanlator;
+                                    continue;
+                                }
+                            }
+                            chapters.push(epData);
+                        }
+
+                        const titlePref = this.getPreference("animekai_title_lang") || "title";
+                        const mainSection = body.selectFirst(".watch-section") || body;
+                        
+                        return { 
+                            name: mainSection.selectFirst("h1, .title")?.attr(titlePref) || 
+                                 mainSection.selectFirst("h1, .title")?.text,
+                            imageUrl: mainSection.selectFirst("img.poster, img.cover")?.attr("src"),
+                            link: this.getBaseUrl() + url,
+                            description: mainSection.selectFirst(".desc, .synopsis")?.text,
+                            genre: mainSection.select(".genre, .tag")?.map(el => el.text.trim()) || [],
+                            status: 1,
+                            chapters: chapters.reverse()
+                        };
                     }
                 }
+            }
 
-                if (!prefDubType.includes(streamType)) continue;
+            // Fallback to direct scraping if API fails
+            console.log("Using fallback scraping method");
+            const episodeContainer = body.selectFirst(".episode-list, .eplist");
+            const episodes = episodeContainer ? 
+                episodeContainer.select("li").map((item, i) => {
+                    const aTag = item.selectFirst("a");
+                    return {
+                        name: aTag?.text || `Episode ${i + 1}`,
+                        url: aTag?.getHref || `${url}/${i + 1}`,
+                        episode: i + 1
+                    };
+                }).reverse() : [];
 
-                const servers = container.select("span.server") || [];
-                for (const server of servers) {
-                    const serverName = server.text.trim();
-                    const serverNum = serverName.replace("Server ", "");
-                    if (!prefServer.includes(serverNum)) continue;
+            const titlePref = this.getPreference("animekai_title_lang") || "title";
+            const mainSection = body.selectFirst(".watch-section") || body;
+            
+            return { 
+                name: mainSection.selectFirst("h1, .title")?.attr(titlePref) || 
+                     mainSection.selectFirst("h1, .title")?.text,
+                imageUrl: mainSection.selectFirst("img.poster, img.cover")?.attr("src"),
+                link: this.getBaseUrl() + url,
+                description: mainSection.selectFirst(".desc, .synopsis")?.text,
+                genre: mainSection.select(".genre, .tag")?.map(el => el.text.trim()) || [],
+                status: 1,
+                chapters: episodes
+            };
 
-                    const dataId = server.attr("data-lid");
-                    if (dataId) {
+        } catch (error) {
+            console.error("getDetail error:", error);
+            return null;
+        }
+    }
+
+    async getVideoList(url) {
+        try {
+            const streams = [];
+            const prefServer = this.getPreference("animekai_pref_stream_server") || ["1", "2"];
+            const prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub"];
+            
+            const epSlug = url.split("||");
+            let isUncensoredVersion = false;
+
+            for (const epId of epSlug) {
+                const token = await this.kaiEncrypt(epId);
+                const res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
+                if (!res) continue;
+
+                const body = JSON.parse(res);
+                if (body.status != 200) continue;
+
+                const serverResult = new Document(body.result);
+                const SERVERDATA = [];
+                
+                const serverItems = serverResult.select("div.server-items") || [];
+                for (const dubSection of serverItems) {
+                    let dubType = dubSection.attr("data-id");
+                    if (!dubType) {
+                        // Fallback type detection
+                        if (dubSection.className.includes("dub")) {
+                            dubType = "dub";
+                        } else {
+                            dubType = "sub"; // Default to sub
+                        }
+                    }
+
+                    if (!prefDubType.includes(dubType)) continue;
+
+                    for (const ser of dubSection.select("span.server")) {
+                        const serverName = ser.text;
+                        const serverNum = serverName.replace("Server ", "");
+                        if (!prefServer.includes(serverNum)) continue;
+
+                        const dataId = ser.attr("data-lid");
                         SERVERDATA.push({
                             serverName,
                             dataId,
-                            streamType,
-                            isUncensored: isUncensoredVersion
+                            dubType
                         });
                     }
                 }
-            }
 
-            // Process servers with precise type checking
-            for (const server of SERVERDATA) {
-                try {
-                    const megaUrl = await this.getMegaUrl(server.dataId);
-                    if (!megaUrl) continue;
+                for (const serverData of SERVERDATA) {
+                    try {
+                        const megaUrl = await this.getMegaUrl(serverData.dataId);
+                        if (!megaUrl) continue;
 
-                    // Verify stream type from URL if possible
-                    let verifiedType = server.streamType;
-                    if (megaUrl.includes("softsub")) {
-                        verifiedType = "softsub";
-                    } else if (megaUrl.includes("dub")) {
-                        verifiedType = "dub";
-                    }
+                        let typeLabel = serverData.dubType.toUpperCase();
+                        if (typeLabel === "SUB") typeLabel = "HARDSUB";
+                        if (isUncensoredVersion) typeLabel += " [Uncensored]";
 
-                    // Set proper type label
-                    let typeLabel;
-                    switch(verifiedType) {
-                        case "sub": 
-                            typeLabel = "HARDSUB"; 
-                            break;
-                        case "softsub": 
-                            typeLabel = "SOFTSUB"; 
-                            break;
-                        case "dub": 
-                            typeLabel = "DUB"; 
-                            break;
-                        default: 
-                            typeLabel = "SUB";
-                    }
-                    
-                    if (server.isUncensored) {
-                        typeLabel += " [Uncensored]";
-                    }
+                        const serverStreams = await this.decryptMegaEmbed(
+                            megaUrl, 
+                            serverData.serverName, 
+                            typeLabel
+                        );
 
-                    const serverStreams = await this.decryptMegaEmbed(
-                        megaUrl,
-                        server.serverName,
-                        typeLabel
-                    );
-
-                    if (serverStreams?.length) {
-                        streams.push(...serverStreams);
-                        
-                        // Only add subtitles for actual DUB streams
-                        if (verifiedType === "dub" && megaUrl.includes("sub.list=")) {
-                            try {
-                                const subList = megaUrl.split("sub.list=")[1];
-                                const subres = await this.client.get(subList);
-                                const subtitles = JSON.parse(subres.body);
-                                const subs = this.formatSubtitles(subtitles, typeLabel);
-                                if (streams.length) {
-                                    streams[streams.length - 1].subtitles = subs;
+                        if (serverStreams?.length) {
+                            streams.push(...serverStreams);
+                            
+                            if (typeLabel.includes("DUB") && megaUrl.includes("sub.list=")) {
+                                try {
+                                    const subList = megaUrl.split("sub.list=")[1];
+                                    const subres = await this.client.get(subList);
+                                    const subtitles = JSON.parse(subres.body);
+                                    const subs = this.formatSubtitles(subtitles, typeLabel);
+                                    if (streams.length) {
+                                        streams[streams.length - 1].subtitles = subs;
+                                    }
+                                } catch (e) {
+                                    console.error("Subtitle error:", e);
                                 }
-                            } catch (e) {
-                                console.error("Subtitle error:", e);
                             }
                         }
+                    } catch (e) {
+                        console.error("Server processing error:", e);
                     }
-                } catch (e) {
-                    console.error("Server processing failed:", server.serverName, e);
                 }
+                isUncensoredVersion = true;
             }
-            isUncensoredVersion = true;
+
+            return streams.length > 0 ? streams : [{
+                url: "",
+                name: "No servers available - Try changing server preferences"
+            }];
+        } catch (error) {
+            console.error("getVideoList error:", error);
+            return [{
+                url: "",
+                name: "Error loading streams - Try again later"
+            }];
         }
-
-        return streams.length > 0 ? streams : [{
-            url: "",
-            name: "No servers available - Try enabling more options in settings"
-        }];
-    } catch (error) {
-        console.error("Video list error:", error);
-        return [{
-            url: "",
-            name: "Error loading streams"
-        }];
-    }
-}
-    async formatStreams(sUrl, serverName, dubType) {
-        function streamNamer(res) {
-            return `${res} - ${dubType} : ${serverName}`;
-        }
-
-        var streams = [{
-            url: sUrl,
-            originalUrl: sUrl,
-            quality: streamNamer("Auto")
-        }];
-
-        var pref = this.getPreference("animekai_pref_extract_streams");
-        if (!pref) return streams;
-
-        var baseUrl = sUrl.split("/list.m3u8")[0].split("/list,")[0];
-
-        const response = await new Client().get(sUrl);
-        const body = response.body;
-        const lines = body.split('\n');
-
-        for (let i = 0; i < lines.length; i++) {
-            if (lines[i].startsWith('#EXT-X-STREAM-INF:')) {
-                var resolution = lines[i].match(/RESOLUTION=(\d+x\d+)/)[1];
-                var qUrl = lines[i + 1].trim();
-                var m3u8Url = `${baseUrl}/${qUrl}`;
-                streams.push({
-                    url: m3u8Url,
-                    originalUrl: m3u8Url,
-                    quality: streamNamer(resolution)
-                });
-            }
-        }
-        return streams;
     }
 
-    async getMegaUrl(vidId) {
-        var token = await this.kaiEncrypt(vidId);
-        var res = await this.request(`/ajax/links/view?id=${vidId}&_=${token}`);
-        if (!res) return null;
-        var body = JSON.parse(res);
-        if (body.status != 200) return null;
-        var outEnc = body.result;
-        var out = await this.kaiDecrypt(outEnc);
-        var o = JSON.parse(out);
-        return decodeURIComponent(o.url);
-    }
-
-    async decryptMegaEmbed(megaUrl, serverName, dubType) {
-        megaUrl = megaUrl.replace("/e/", "/media/");
-        var res = await this.client.get(megaUrl);
-        if (!res) return [];
-        var body = JSON.parse(res.body);
-        if (body.status != 200) return [];
-        var outEnc = body.result;
-        var streamData = await this.megaDecrypt(outEnc);
-        var url = streamData.sources[0].file;
-
-        return await this.formatStreams(url, serverName, dubType);
-    }
-
-    base64UrlDecode(input) {
-        let base64 = input
-            .replace(/-/g, "+")
-            .replace(/_/g, "/");
-
-        while (base64.length % 4 !== 0) {
-            base64 += "=";
-        }
-
-        const base64abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        const outputBytes = [];
-
-        for (let i = 0; i < base64.length; i += 4) {
-            const c1 = base64abc.indexOf(base64[i]);
-            const c2 = base64abc.indexOf(base64[i + 1]);
-            const c3 = base64abc.indexOf(base64[i + 2]);
-            const c4 = base64abc.indexOf(base64[i + 3]);
-
-            const triplet = (c1 << 18) | (c2 << 12) | ((c3 & 63) << 6) | (c4 & 63);
-
-            outputBytes.push((triplet >> 16) & 0xFF);
-            if (base64[i + 2] !== "=") outputBytes.push((triplet >> 8) & 0xFF);
-            if (base64[i + 3] !== "=") outputBytes.push(triplet & 0xFF);
-        }
-
-        return String.fromCharCode(...outputBytes);
-    }
-
-    base64UrlEncode(str) {
-        const bytes = [];
-        for (let i = 0; i < str.length; i++) {
-            bytes.push(str.charCodeAt(i) & 0xFF);
-        }
-
-        const base64abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-        let base64 = "";
-        for (let i = 0; i < bytes.length; i += 3) {
-            const b1 = bytes[i];
-            const b2 = bytes[i + 1] ?? 0;
-            const b3 = bytes[i + 2] ?? 0;
-
-            const triplet = (b1 << 16) | (b2 << 8) | b3;
-
-            base64 += base64abc[(triplet >> 18) & 0x3F];
-            base64 += base64abc[(triplet >> 12) & 0x3F];
-            base64 += i + 1 < bytes.length ? base64abc[(triplet >> 6) & 0x3F] : "=";
-            base64 += i + 2 < bytes.length ? base64abc[triplet & 0x3F] : "=";
-        }
-
-        return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-    }
-
-    transform(key, text) {
-        const v = Array.from({ length: 256 }, (_, i) => i);
-        let c = 0;
-        const f = [];
-
-        for (let w = 0; w < 256; w++) {
-            c = (c + v[w] + key.charCodeAt(w % key.length)) % 256;
-            [v[w], v[c]] = [v[c], v[w]];
-        }
-
-        let a = 0, w = 0, sum = 0;
-        while (a < text.length) {
-            w = (w + 1) % 256;
-            sum = (sum + v[w]) % 256;
-            [v[w], v[sum]] = [v[sum], v[w]];
-            f.push(String.fromCharCode(text.charCodeAt(a) ^ v[(v[w] + v[sum]) % 256]));
-            a++;
-        }
-        return f.join('');
-    }
-
-    reverseString(input) {
-        return input.split('').reverse().join('');
-    }
-
-    substitute(input, keys, values) {
-        const map = {};
-        for (let i = 0; i < keys.length; i++) {
-            map[keys[i]] = values[i] || keys[i];
-        }
-        return input.split('').map(char => map[char] || char).join('');
-    }
-
-    async getDecoderPattern() {
-        const preferences = new SharedPreferences();
-        let pattern = preferences.getString("anime_kai_decoder_pattern", "");
-        var pattern_ts = parseInt(preferences.getString("anime_kai_decoder_pattern_ts", "0"));
-        var now_ts = parseInt(new Date().getTime() / 1000);
-
-        if (now_ts - pattern_ts > 30 * 60) {
-            var res = await this.client.get("https://raw.githubusercontent.com/amarullz/kaicodex/refs/heads/main/generated/kai_codex.json");
-            pattern = res.body;
-            preferences.setString("anime_kai_decoder_pattern", pattern);
-            preferences.setString("anime_kai_decoder_pattern_ts", `${now_ts}`);
-        }
-
-        return JSON.parse(pattern);
-    }
-
-    async patternExecutor(key, type, id) {
-        var result = id;
-        var pattern = await this.getDecoderPattern();
-        var logic = pattern[key][type];
-        logic.forEach(step => {
-            var method = step[0];
-            if (method == "urlencode") result = encodeURIComponent(result);
-            else if (method == "urldecode") result = decodeURIComponent(result);
-            else if (method == "rc4") result = this.transform(step[1], result);
-            else if (method == "reverse") result = this.reverseString(result);
-            else if (method == "substitute") result = this.substitute(result, step[1], step[2]);
-            else if (method == "safeb64_decode") result = this.base64UrlDecode(result);
-            else if (method == "safeb64_encode") result = this.base64UrlEncode(result);
-        });
-        return result;
-    }
-
-    async kaiEncrypt(id) {
-        return await this.patternExecutor("kai", "encrypt", id);
-    }
-
-    async kaiDecrypt(id) {
-        return await this.patternExecutor("kai", "decrypt", id);
-    }
-
-    async megaDecrypt(data) {
-        var streamData = await this.patternExecutor("megaup", "decrypt", data);
-        return JSON.parse(streamData);
-    }
-
-    getFilterList() {
-        function formateState(type_name, items, values) {
-            var state = [];
-            for (var i = 0; i < items.length; i++) {
-                state.push({ type_name: type_name, name: items[i], value: values[i] });
-            }
-            return state;
-        }
-
-        var filters = [];
-
-        // Types
-        var items = ["TV", "Special", "OVA", "ONA", "Music", "Movie"];
-        var values = ["tv", "special", "ova", "ona", "music", "movie"];
-        filters.push({
-            type_name: "GroupFilter",
-            name: "Types",
-            state: formateState("CheckBox", items, values)
-        });
-
-        // Genre
-        items = [
-            "Action", "Adventure", "Avant Garde", "Boys Love", "Comedy", "Demons", "Drama", "Ecchi", "Fantasy",
-            "Girls Love", "Gourmet", "Harem", "Horror", "Isekai", "Iyashikei", "Josei", "Kids", "Magic",
-            "Mahou Shoujo", "Martial Arts", "Mecha", "Military", "Music", "Mystery", "Parody", "Psychological",
-            "Reverse Harem", "Romance", "School", "Sci-Fi", "Seinen", "Shoujo", "Shounen", "Slice of Life",
-            "Space", "Sports", "Super Power", "Supernatural", "Suspense", "Thriller", "Vampire"
-        ];
-
-        values = [
-            "47", "1", "235", "184", "7", "127", "66", "8", "34", "926", "436", "196", "421", "77", "225",
-            "555", "35", "78", "857", "92", "219", "134", "27", "48", "356", "240", "798", "145", "9", "36",
-            "189", "183", "37", "125", "220", "10", "350", "49", "322", "241", "126"
-        ];
-
-        filters.push({
-            type_name: "GroupFilter",
-            name: "Genres",
-            state: formateState("CheckBox", items, values)
-        });
-
-        // Status
-        items = ["Not Yet Aired", "Releasing", "Completed"];
-        values = ["info", "releasing", "completed"];
-        filters.push({
-            type_name: "GroupFilter",
-            name: "Status",
-            state: formateState("CheckBox", items, values)
-        });
-
-        // Sort
-        items = [
-            "All", "Updated date", "Released date", "End date", "Added date", "Trending",
-            "Name A-Z", "Average score", "MAL score", "Total views", "Total bookmarks", "Total episodes"
-        ];
-
-        values = [
-            "", "updated_date", "released_date", "end_date", "added_date", "trending",
-            "title_az", "avg_score", "mal_score", "total_views", "total_bookmarks", "total_episodes"
-        ];
-        filters.push({
-            type_name: "SelectFilter",
-            name: "Sort by",
-            state: 0,
-            values: formateState("SelectOption", items, values)
-        });
-
-        // Season
-        items = ["Fall", "Summer", "Spring", "Winter", "Unknown"];
-        values = ["fall", "summer", "spring", "winter", "unknown"];
-        filters.push({
-            type_name: "GroupFilter",
-            name: "Season",
-            state: formateState("CheckBox", items, values)
-        });
-
-        // Years
-        const currentYear = new Date().getFullYear();
-        var years = Array.from({ length: currentYear - 1999 }, (_, i) => (2000 + i).toString()).reverse();
-        items = [...years, "1990s", "1980s", "1970s", "1960s", "1950s", "1940s", "1930s", "1920s", "1910s", "1900s"];
-        filters.push({
-            type_name: "GroupFilter",
-            name: "Years",
-            state: formateState("CheckBox", items, items)
-        });
-
-        // Ratings
-        items = [
-            "G - All Ages",
-            "PG - Children",
-            "PG 13 - Teens 13 and Older",
-            "R - 17+, Violence & Profanity",
-            "R+ - Profanity & Mild Nudity",
-            "Rx - Hentai"
-        ];
-
-        values = ["g", "pg", "pg_13", "r", "r+", "rx"];
-        filters.push({
-            type_name: "GroupFilter",
-            name: "Ratings",
-            state: formateState("CheckBox", items, items)
-        });
-
-        // Country
-        items = ["Japan", "China"];
-        values = ["11", "2"];
-        filters.push({
-            type_name: "GroupFilter",
-            name: "Country",
-            state: formateState("CheckBox", items, items)
-        });
-
-        // Language
-        items = ["Hard Sub", "Soft Sub", "Dub", "Sub & Dub"];
-        values = ["sub", "softsub", "dub", "subdub"];
-        filters.push({
-            type_name: "GroupFilter",
-            name: "Language",
-            state: formateState("CheckBox", items, items)
-        });
-
-        return filters;
-    }
-
-    getSourcePreferences() {
-        return [
-            {
-                key: "animekai_base_url",
-                editTextPreference: {
-                    title: "Override base url",
-                    summary: "",
-                    value: "https://animekai.to",
-                    dialogTitle: "Override base url",
-                    dialogMessage: "",
-                }
-            }, {
-                key: "animekai_popular_latest_type",
-                multiSelectListPreference: {
-                    title: 'Preferred type of anime to be shown in popular & latest section',
-                    summary: 'Choose which type of anime you want to see in the popular &latest section',
-                    values: ["tv", "special", "ova", "ona"],
-                    entries: ["TV", "Special", "OVA", "ONA", "Music", "Movie"],
-                    entryValues: ["tv", "special", "ova", "ona", "music", "movie"]
-                }
-            }, {
-                key: "animekai_title_lang",
-                listPreference: {
-                    title: 'Preferred title language',
-                    summary: 'Choose in which language anime title should be shown',
-                    valueIndex: 1,
-                    entries: ["English", "Romaji"],
-                    entryValues: ["title", "data-jp"]
-                }
-            },
-            {
-                key: "animekai_show_uncen_epsiodes",
-                switchPreferenceCompat: {
-                    title: 'Show uncensored episodes',
-                    summary: "",
-                    value: true
-                }
-            }, {
-                key: "animekai_pref_stream_server",
-                multiSelectListPreference: {
-                    title: 'Preferred server',
-                    summary: 'Choose the server/s you want to extract streams from',
-                    values: ["1"],
-                    entries: ["Server 1", "Server 2"],
-                    entryValues: ["1", "2"]
-                }
-            }, {
-                key: "animekai_pref_stream_subdub_type",
-                multiSelectListPreference: {
-                    title: 'Preferred stream sub/dub type',
-                    summary: '',
-                    values: ["sub", "softsub", "dub"],
-                    entries: ["Hard Sub", "Soft Sub", "Dub"],
-                    entryValues: ["sub", "softsub", "dub"]
-                }
-            }, {
-                key: "animekai_pref_extract_streams",
-                switchPreferenceCompat: {
-                    title: 'Split stream into different quality streams',
-                    summary: "Split stream Auto into 360p/720p/1080p",
-                    value: true
-                }
-            },
-        ];
-    }
+    // [Keep all your existing utility methods below]
+    // formatSubtitles(), formatStreams(), getMegaUrl(), decryptMegaEmbed()
+    // base64UrlDecode(), base64UrlEncode(), transform(), reverseString()
+    // substitute(), getDecoderPattern(), patternExecutor(), kaiEncrypt()
+    // kaiDecrypt(), megaDecrypt(), getFilterList(), getSourcePreferences()
 }
 
 if (typeof module !== 'undefined') {
