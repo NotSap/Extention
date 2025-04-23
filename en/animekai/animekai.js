@@ -236,7 +236,6 @@ class DefaultExtension extends MProvider {
 async getVideoList(url) {
     try {
         const streams = [];
-        // Default to all servers and types if preferences not set
         const prefServer = this.getPreference("animekai_pref_stream_server") || ["1", "2", "3"];
         const prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "softsub", "dub"];
         
@@ -254,28 +253,36 @@ async getVideoList(url) {
             const serverResult = new Document(body.result);
             const SERVERDATA = [];
             
-            // 1. First try standard server containers
+            // Improved stream type detection
             const serverContainers = serverResult.select("div.server-items") || [];
             for (const container of serverContainers) {
-                const streamType = container.attr("data-id")?.toLowerCase() || 
-                                 container.className.includes("dub") ? "dub" :
-                                 container.className.includes("softsub") ? "softsub" : "sub";
+                // Get precise stream type
+                let streamType = container.attr("data-id")?.toLowerCase();
+                
+                // If data-id isn't clear, check container contents
+                if (!streamType || !["sub", "softsub", "dub"].includes(streamType)) {
+                    const containerText = container.text().toLowerCase();
+                    if (containerText.includes("dub")) {
+                        streamType = "dub";
+                    } else if (containerText.includes("softsub")) {
+                        streamType = "softsub";
+                    } else {
+                        streamType = "sub"; // Default to sub if unclear
+                    }
+                }
 
                 if (!prefDubType.includes(streamType)) continue;
 
-                const servers = container.select("span.server, .server-item") || [];
+                const servers = container.select("span.server") || [];
                 for (const server of servers) {
-                    const serverText = server.text.trim();
-                    const serverNum = serverText.match(/Server (\d+)/)?.[1] || 
-                                     server.attr("data-id") || 
-                                     "1";
-
+                    const serverName = server.text.trim();
+                    const serverNum = serverName.replace("Server ", "");
                     if (!prefServer.includes(serverNum)) continue;
 
-                    const dataId = server.attr("data-lid") || server.attr("data-id");
+                    const dataId = server.attr("data-lid");
                     if (dataId) {
                         SERVERDATA.push({
-                            serverName: `Server ${serverNum}`,
+                            serverName,
                             dataId,
                             streamType,
                             isUncensored: isUncensoredVersion
@@ -284,47 +291,34 @@ async getVideoList(url) {
                 }
             }
 
-            // 2. Fallback to alternative container selectors if no servers found
-            if (SERVERDATA.length === 0) {
-                const fallbackContainers = serverResult.select("div[data-id], .servers-container, .server-tabs") || [];
-                for (const container of fallbackContainers) {
-                    const streamType = container.attr("data-id")?.toLowerCase() || "sub";
-                    if (!prefDubType.includes(streamType)) continue;
-
-                    const servers = container.select("li, .server-btn, [data-server]") || [];
-                    for (const server of servers) {
-                        const serverNum = server.attr("data-server") || 
-                                         server.text.match(/\d+/)?.toString() || 
-                                         "1";
-                        
-                        if (!prefServer.includes(serverNum)) continue;
-
-                        const dataId = server.attr("data-id") || server.attr("data-lid");
-                        if (dataId) {
-                            SERVERDATA.push({
-                                serverName: `Server ${serverNum}`,
-                                dataId,
-                                streamType,
-                                isUncensored: isUncensoredVersion
-                            });
-                        }
-                    }
-                }
-            }
-
-            // Process all found servers
+            // Process servers with precise type checking
             for (const server of SERVERDATA) {
                 try {
                     const megaUrl = await this.getMegaUrl(server.dataId);
                     if (!megaUrl) continue;
 
-                    // Determine proper type label
+                    // Verify stream type from URL if possible
+                    let verifiedType = server.streamType;
+                    if (megaUrl.includes("softsub")) {
+                        verifiedType = "softsub";
+                    } else if (megaUrl.includes("dub")) {
+                        verifiedType = "dub";
+                    }
+
+                    // Set proper type label
                     let typeLabel;
-                    switch(server.streamType) {
-                        case "sub": typeLabel = "SUB"; break;
-                        case "softsub": typeLabel = "SOFTSUB"; break;
-                        case "dub": typeLabel = "DUB"; break;
-                        default: typeLabel = "SUB";
+                    switch(verifiedType) {
+                        case "sub": 
+                            typeLabel = "HARDSUB"; 
+                            break;
+                        case "softsub": 
+                            typeLabel = "SOFTSUB"; 
+                            break;
+                        case "dub": 
+                            typeLabel = "DUB"; 
+                            break;
+                        default: 
+                            typeLabel = "SUB";
                     }
                     
                     if (server.isUncensored) {
@@ -340,8 +334,8 @@ async getVideoList(url) {
                     if (serverStreams?.length) {
                         streams.push(...serverStreams);
                         
-                        // Add subtitles for DUB streams
-                        if (server.streamType === "dub" && megaUrl.includes("sub.list=")) {
+                        // Only add subtitles for actual DUB streams
+                        if (verifiedType === "dub" && megaUrl.includes("sub.list=")) {
                             try {
                                 const subList = megaUrl.split("sub.list=")[1];
                                 const subres = await this.client.get(subList);
@@ -362,59 +356,18 @@ async getVideoList(url) {
             isUncensoredVersion = true;
         }
 
-        // Final check if we found any streams
-        if (streams.length > 0) {
-            return streams;
-        }
-
-        // If still no streams, try direct episode page as last resort
-        const directStreams = await this.tryDirectEpisodePage(url.split("||")[0]);
-        if (directStreams.length > 0) {
-            return directStreams;
-        }
-
-        return [{
+        return streams.length > 0 ? streams : [{
             url: "",
-            name: "No servers available - Try different server/type in settings"
+            name: "No servers available - Try enabling more options in settings"
         }];
-
     } catch (error) {
         console.error("Video list error:", error);
         return [{
             url: "",
-            name: "Error loading streams - Try again later"
+            name: "Error loading streams"
         }];
     }
 }
-
-async tryDirectEpisodePage(epId) {
-    try {
-        const episodeUrl = `${this.getBaseUrl()}/watch/${epId}`;
-        const doc = await this.getPage(episodeUrl);
-        if (!doc) return [];
-
-        const streams = [];
-        const videoContainers = doc.select("video, .video-container, .player-container") || [];
-        
-        for (const container of videoContainers) {
-            const src = container.attr("src") || 
-                       container.selectFirst("source")?.attr("src");
-            if (src) {
-                streams.push({
-                    url: src,
-                    name: "Direct Stream",
-                    quality: "Auto"
-                });
-            }
-        }
-        
-        return streams;
-    } catch (e) {
-        console.error("Direct episode fallback failed:", e);
-        return [];
-    }
-}
-
     async formatStreams(sUrl, serverName, dubType) {
         function streamNamer(res) {
             return `${res} - ${dubType} : ${serverName}`;
