@@ -120,76 +120,72 @@ class DefaultExtension extends MProvider {
     }
 
     async getDetail(url) {
-        function statusCode(status) {
-            return {
-                "Releasing": 0,
-                "Completed": 1,
-                "Not Yet Aired": 4,
-            }[status] ?? 5;
-        }
+    function statusCode(status) {
+        return {
+            "Releasing": 0,
+            "Completed": 1,
+            "Not Yet Aired": 4,
+        }[status] ?? 5;
+    }
 
-        try {
-            var slug = url;
-            var link = this.getBaseUrl() + slug;
-            var body = await this.getPage(slug);
-            if (!body) return null;
+    try {
+        var slug = url;
+        var link = this.getBaseUrl() + slug;
+        var body = await this.getPage(slug);
+        if (!body) return null;
 
-            var mainSection = body.selectFirst(".watch-section");
-            if (!mainSection) return null;
+        var mainSection = body.selectFirst(".watch-section");
+        if (!mainSection) return null;
 
-            var imageUrl = mainSection.selectFirst("div.poster")?.selectFirst("img")?.getSrc;
+        var imageUrl = mainSection.selectFirst("div.poster")?.selectFirst("img")?.getSrc;
 
-            var namePref = this.getPreference("animekai_title_lang") || "title";
-            var nameSection = mainSection.selectFirst("div.title");
-            var name = namePref.includes("jp") ? nameSection?.attr(namePref) : nameSection?.text;
+        var namePref = this.getPreference("animekai_title_lang") || "title";
+        var nameSection = mainSection.selectFirst("div.title");
+        var name = namePref.includes("jp") ? nameSection?.attr(namePref) : nameSection?.text;
 
-            var description = mainSection.selectFirst("div.desc")?.text;
+        var description = mainSection.selectFirst("div.desc")?.text;
 
-            var detailSection = mainSection.select("div.detail > div") || [];
+        var detailSection = mainSection.select("div.detail > div") || [];
 
-            var genre = [];
-            var status = 5;
-            detailSection.forEach(item => {
-                var itemText = item.text.trim();
-                if (itemText.includes("Genres")) {
-                    genre = itemText.replace("Genres:  ", "").split(", ");
-                }
-                if (itemText.includes("Status")) {
-                    var statusText = item.selectFirst("span")?.text;
-                    status = statusCode(statusText);
-                }
-            });
+        var genre = [];
+        var status = 5;
+        detailSection.forEach(item => {
+            var itemText = item.text.trim();
+            if (itemText.includes("Genres")) {
+                genre = itemText.replace("Genres:  ", "").split(", ");
+            }
+            if (itemText.includes("Status")) {
+                var statusText = item.selectFirst("span")?.text;
+                status = statusCode(statusText);
+            }
+        });
 
-            var chapters = [];
-            var animeId = body.selectFirst("#anime-rating")?.attr("data-id");
-            if (animeId) {
-                var token = await this.kaiEncrypt(animeId);
-                // Added headers to the episode list request
-                var res = await this.client.get(this.getBaseUrl() + `/ajax/episodes/list?ani_id=${animeId}&_=${token}`, {
-                    headers: {
-                        "X-Requested-With": "XMLHttpRequest",
-                        "Referer": link
-                    }
-                });
-                if (res && res.body) {
-                    body = JSON.parse(res.body);
-                    if (body.status == 200) {
-                        var doc = new Document(body["result"]);
-                        var episodes = doc.selectFirst("div.eplist.titles")?.select("li") || [];
+        var chapters = [];
+        var animeId = body.selectFirst("#anime-rating")?.attr("data-id");
+        if (animeId) {
+            var token = await this.kaiEncrypt(animeId);
+            var res = await this.request(`/ajax/episodes/list?ani_id=${animeId}&_=${token}`);
+            if (res) {
+                try {
+                    var data = JSON.parse(res);
+                    if (data.status === 200 && data.result) {
+                        var doc = new Document(data.result);
+                        var episodes = doc.select("li") || [];
                         var showUncenEp = this.getPreference("animekai_show_uncen_epsiodes");
 
                         for (var item of episodes) {
                             var aTag = item.selectFirst("a");
                             if (!aTag) continue;
 
-                            var num = parseInt(aTag.attr("num"));
-                            var title = aTag.selectFirst("span")?.text;
-                            title = title?.includes("Episode") ? "" : `: ${title}`;
-                            var epName = `Episode ${num}${title}`;
+                            var num = parseInt(aTag.attr("num")) || 0;
+                            var title = aTag.selectFirst("span")?.text?.trim() || "";
+                            var epName = title.includes("Episode") ? title : `Episode ${num}${title ? ": " + title : ""}`;
 
                             var langs = aTag.attr("langs");
                             var scanlator = langs === "1" ? "SUB" : "SUB, DUB";
                             var token = aTag.attr("token");
+
+                            if (!token) continue;
 
                             var epData = {
                                 name: epName,
@@ -201,44 +197,40 @@ class DefaultExtension extends MProvider {
                             if (slug?.includes("uncen")) {
                                 if (!showUncenEp) continue;
 
-                                scanlator += ", UNCENSORED";
-                                epName = `Episode ${num}: (Uncensored)`;
-                                epData = {
-                                    name: epName,
-                                    url: token,
-                                    scanlator
-                                };
+                                epData.name = `Episode ${num} (Uncensored)`;
+                                epData.scanlator += ", UNCENSORED";
 
-                                var exData = chapters[num - 1];
-                                if (exData) {
-                                    exData.url += "||" + epData.url;
-                                    exData.scanlator += ", " + epData.scanlator;
-                                    chapters[num - 1] = exData;
+                                var existingEp = chapters.find(ep => ep.name.includes(`Episode ${num}`));
+                                if (existingEp) {
+                                    existingEp.url += "||" + epData.url;
+                                    existingEp.scanlator += ", " + epData.scanlator;
                                     continue;
                                 }
                             }
                             chapters.push(epData);
                         }
                     }
+                } catch (e) {
+                    console.error("Failed to parse episode data:", e);
                 }
             }
-            chapters.reverse();
-            
-            return { 
-                name, 
-                imageUrl, 
-                link, 
-                description, 
-                genre, 
-                status, 
-                chapters 
-            };
-        } catch (error) {
-            console.error("Failed to get detail:", error);
-            return null;
         }
+        chapters.reverse();
+        
+        return { 
+            name, 
+            imageUrl, 
+            link, 
+            description, 
+            genre, 
+            status, 
+            chapters 
+        };
+    } catch (error) {
+        console.error("Failed to get detail:", error);
+        return null;
     }
-
+}
     async getVideoList(url) {
         try {
             var streams = [];
