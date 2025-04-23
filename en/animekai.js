@@ -40,7 +40,6 @@ class DefaultExtension extends MProvider {
         return res ? new Document(res) : null;
     }
 
-    // WORKING SEARCH FUNCTION (FROM YOUR SECOND CODE)
     async search(query, page, filters) {
         try {
             const filterValues = {
@@ -120,7 +119,6 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // DETAIL FETCHING FROM YOUR FIRST 700+ LINE CODE
     async getDetail(url) {
         function statusCode(status) {
             return {
@@ -235,94 +233,141 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // VIDEO LIST FETCHING FROM YOUR FIRST 700+ LINE CODE
-    async getVideoList(url) {
-        try {
-            var streams = [];
-            var prefServer = this.getPreference("animekai_pref_stream_server") || ["1"];
-            var prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub"];
+async getVideoList(url) {
+    try {
+        const streams = [];
+        const prefServer = this.getPreference("animekai_pref_stream_server") || ["1", "2", "3"];
+        const prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "softsub", "dub"];
+        
+        const epSlug = url.split("||");
+        let isUncensoredVersion = false;
 
-            var epSlug = url.split("||");
+        for (const epId of epSlug) {
+            const token = await this.kaiEncrypt(epId);
+            const res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
+            if (!res) continue;
 
-            var isUncensoredVersion = false;
-            for (var epId of epSlug) {
-                var token = await this.kaiEncrypt(epId);
-                var res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
-                if (!res) continue;
+            const body = JSON.parse(res);
+            if (body.status != 200) continue;
 
-                var body = JSON.parse(res);
-                if (body.status != 200) continue;
+            const serverResult = new Document(body.result);
+            const SERVERDATA = [];
+            
+            // Improved stream type detection
+            const serverContainers = serverResult.select("div.server-items") || [];
+            for (const container of serverContainers) {
+                // Get precise stream type
+                let streamType = container.attr("data-id")?.toLowerCase();
+                
+                // If data-id isn't clear, check container contents
+                if (!streamType || !["sub", "softsub", "dub"].includes(streamType)) {
+                    const containerText = container.text().toLowerCase();
+                    if (containerText.includes("dub")) {
+                        streamType = "dub";
+                    } else if (containerText.includes("softsub")) {
+                        streamType = "softsub";
+                    } else {
+                        streamType = "sub"; // Default to sub if unclear
+                    }
+                }
 
-                var serverResult = new Document(body.result);
-                var SERVERDATA = [];
-                var server_items = serverResult.select("div.server-items") || [];
+                if (!prefDubType.includes(streamType)) continue;
 
-                for (var dubSection of server_items) {
-                    var dubType = dubSection.attr("data-id");
-                    if (!prefDubType.includes(dubType)) continue;
+                const servers = container.select("span.server") || [];
+                for (const server of servers) {
+                    const serverName = server.text.trim();
+                    const serverNum = serverName.replace("Server ", "");
+                    if (!prefServer.includes(serverNum)) continue;
 
-                    for (var ser of dubSection.select("span.server")) {
-                        var serverName = ser.text;
-                        if (!prefServer.includes(serverName.replace("Server ", ""))) continue;
-
-                        var dataId = ser.attr("data-lid");
+                    const dataId = server.attr("data-lid");
+                    if (dataId) {
                         SERVERDATA.push({
                             serverName,
                             dataId,
-                            dubType
+                            streamType,
+                            isUncensored: isUncensoredVersion
                         });
                     }
                 }
+            }
 
-                for (var serverData of SERVERDATA) {
-                    var serverName = serverData.serverName;
-                    var dataId = serverData.dataId;
-                    var dubType = serverData.dubType.toUpperCase();
-                    dubType = dubType == "SUB" ? "HARDSUB" : dubType;
-                    dubType = isUncensoredVersion ? `${dubType} [Uncensored]` : dubType;
-
-                    var megaUrl = await this.getMegaUrl(dataId);
+            // Process servers with precise type checking
+            for (const server of SERVERDATA) {
+                try {
+                    const megaUrl = await this.getMegaUrl(server.dataId);
                     if (!megaUrl) continue;
 
-                    var serverStreams = await this.decryptMegaEmbed(megaUrl, serverName, dubType);
-                    streams = [...streams, ...serverStreams];
+                    // Verify stream type from URL if possible
+                    let verifiedType = server.streamType;
+                    if (megaUrl.includes("softsub")) {
+                        verifiedType = "softsub";
+                    } else if (megaUrl.includes("dub")) {
+                        verifiedType = "dub";
+                    }
 
-                    if (dubType.includes("DUB")) {
-                        if (!megaUrl.includes("sub.list=")) continue;
-                        var subList = megaUrl.split("sub.list=")[1];
+                    // Set proper type label
+                    let typeLabel;
+                    switch(verifiedType) {
+                        case "sub": 
+                            typeLabel = "HARDSUB"; 
+                            break;
+                        case "softsub": 
+                            typeLabel = "SOFTSUB"; 
+                            break;
+                        case "dub": 
+                            typeLabel = "DUB"; 
+                            break;
+                        default: 
+                            typeLabel = "SUB";
+                    }
+                    
+                    if (server.isUncensored) {
+                        typeLabel += " [Uncensored]";
+                    }
 
-                        var subres = await this.client.get(subList);
-                        var subtitles = JSON.parse(subres.body);
-                        var subs = this.formatSubtitles(subtitles, dubType);
-                        if (streams.length > 0) {
-                            streams[streams.length - 1].subtitles = subs;
+                    const serverStreams = await this.decryptMegaEmbed(
+                        megaUrl,
+                        server.serverName,
+                        typeLabel
+                    );
+
+                    if (serverStreams?.length) {
+                        streams.push(...serverStreams);
+                        
+                        // Only add subtitles for actual DUB streams
+                        if (verifiedType === "dub" && megaUrl.includes("sub.list=")) {
+                            try {
+                                const subList = megaUrl.split("sub.list=")[1];
+                                const subres = await this.client.get(subList);
+                                const subtitles = JSON.parse(subres.body);
+                                const subs = this.formatSubtitles(subtitles, typeLabel);
+                                if (streams.length) {
+                                    streams[streams.length - 1].subtitles = subs;
+                                }
+                            } catch (e) {
+                                console.error("Subtitle error:", e);
+                            }
                         }
                     }
+                } catch (e) {
+                    console.error("Server processing failed:", server.serverName, e);
                 }
-                isUncensoredVersion = true;
             }
-
-            return streams;
-        } catch (error) {
-            console.error("Failed to get video list:", error);
-            return [];
+            isUncensoredVersion = true;
         }
-    }
 
-    // REMAINING UTILITY FUNCTIONS FROM YOUR FIRST 700+ LINE CODE
-    formatSubtitles(subtitles, dubType) {
-        var subs = [];
-        subtitles.forEach(sub => {
-            if (!sub.kind.includes("thumbnail")) {
-                subs.push({
-                    file: sub.file,
-                    label: `${sub.label} - ${dubType}`
-                });
-            }
-        });
-        return subs;
+        return streams.length > 0 ? streams : [{
+            url: "",
+            name: "No servers available - Try enabling more options in settings"
+        }];
+    } catch (error) {
+        console.error("Video list error:", error);
+        return [{
+            url: "",
+            name: "Error loading streams"
+        }];
     }
-
+}
     async formatStreams(sUrl, serverName, dubType) {
         function streamNamer(res) {
             return `${res} - ${dubType} : ${serverName}`;
@@ -383,7 +428,6 @@ class DefaultExtension extends MProvider {
         return await this.formatStreams(url, serverName, dubType);
     }
 
-    // DECODER FUNCTIONS FROM YOUR FIRST 700+ LINE CODE
     base64UrlDecode(input) {
         let base64 = input
             .replace(/-/g, "+")
@@ -516,7 +560,6 @@ class DefaultExtension extends MProvider {
         return JSON.parse(streamData);
     }
 
-    // FILTER LIST FROM YOUR FIRST 700+ LINE CODE
     getFilterList() {
         function formateState(type_name, items, values) {
             var state = [];
@@ -641,7 +684,6 @@ class DefaultExtension extends MProvider {
         return filters;
     }
 
-    // SETTINGS FROM YOUR FIRST 700+ LINE CODE
     getSourcePreferences() {
         return [
             {
@@ -712,4 +754,3 @@ class DefaultExtension extends MProvider {
 if (typeof module !== 'undefined') {
     module.exports = mangayomiSources;
 }
-
