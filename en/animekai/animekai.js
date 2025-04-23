@@ -1,50 +1,67 @@
 const source = {
-    name: "HiAnime",
+    name: "AnimeKai (Stable)",
     lang: "en",
-    baseUrl: "https://hianime.to",
-    iconUrl: "https://www.google.com/s2/favicons?sz=64&domain=hianime.to",
+    baseUrl: "https://animekai.to",
+    iconUrl: "https://www.google.com/s2/favicons?sz=64&domain=animekai.to",
     typeSource: "single",
     itemType: 1,
-    version: "1.0.0",
-    class: class HiAnime {
+    version: "2.0.2",
+    class: class AnimeKai {
         constructor() {
             this.client = new Client();
-            this.headers = {
-                "User-Agent": "Mozilla/5.0",
-                "Referer": "https://hianime.to/"
-            };
+            this.cache = new Map();
         }
 
-        // ==================== CORE FUNCTIONS ====================
-        async request(url) {
+        // ========== CORE METHODS ==========
+        async request(url, options = {}) {
             try {
                 const fullUrl = url.startsWith("http") ? url : this.baseUrl + url;
-                const res = await this.client.get(fullUrl, { headers: this.headers });
-                return res?.body || null;
+                const cacheKey = fullUrl + JSON.stringify(options);
+                
+                // Return cached response if available
+                if (this.cache.has(cacheKey)) {
+                    return this.cache.get(cacheKey);
+                }
+
+                const res = await this.client.get(fullUrl, {
+                    headers: {
+                        "Referer": this.baseUrl,
+                        "User-Agent": "Mozilla/5.0"
+                    },
+                    ...options
+                });
+
+                // Cache successful responses for 5 minutes
+                if (res.statusCode === 200) {
+                    this.cache.set(cacheKey, res.body);
+                    setTimeout(() => this.cache.delete(cacheKey), 300000);
+                }
+
+                return res.body;
             } catch (error) {
-                console.error(`Request failed for ${url}:`, error);
+                console.error(`Request failed: ${url}`, error);
                 return null;
             }
         }
 
-        // ==================== SEARCH ====================
+        // ========== SEARCH ==========
         async search(query, page) {
             try {
-                const searchUrl = `/search?keyword=${encodeURIComponent(query)}&page=${page}`;
-                const body = await this.request(searchUrl);
-                if (!body) return { list: [], hasNextPage: false };
+                const searchUrl = `/browser?keyword=${encodeURIComponent(query)}&page=${page}`;
+                const html = await this.request(searchUrl);
+                if (!html) return { list: [], hasNextPage: false };
 
-                const doc = new Document(body);
-                const items = doc.select(".film_list-wrap .flw-item") || [];
+                const doc = new Document(html);
+                const items = doc.select(".aitem-wrapper .aitem") || [];
                 
                 const results = items.map(item => ({
-                    name: item.selectFirst(".film-name a")?.text()?.trim() || "Untitled",
-                    link: item.selectFirst(".film-name a")?.getHref(),
-                    imageUrl: item.selectFirst(".film-poster img")?.attr("data-src"),
-                    type: item.selectFirst(".fdi-type")?.text()?.trim()
-                })).filter(i => i.link);
+                    name: item.selectFirst(".title")?.text()?.trim() || "Unknown Title",
+                    link: item.selectFirst("a")?.getHref(),
+                    imageUrl: item.selectFirst("img")?.attr("data-src"),
+                    type: item.selectFirst(".type")?.text()?.trim()
+                })).filter(i => i.link && i.imageUrl);
 
-                const hasNextPage = doc.select(".pagination .next")?.length > 0;
+                const hasNextPage = doc.select(".pagination li.active + li")?.length > 0;
                 return { list: results, hasNextPage };
             } catch (error) {
                 console.error("Search error:", error);
@@ -52,22 +69,23 @@ const source = {
             }
         }
 
-        // ==================== DETAILS ====================
+        // ========== DETAILS ==========
         async getDetail(url) {
             try {
-                const body = await this.request(url);
-                if (!body) return null;
+                const html = await this.request(url);
+                if (!html) return null;
 
-                const doc = new Document(body);
-                const episodes = await this.getEpisodes(doc);
+                const doc = new Document(html);
+                const mainSection = doc.selectFirst(".watch-section");
+                if (!mainSection) return null;
 
                 return {
-                    name: doc.selectFirst(".anisc-detail .film-name")?.text()?.trim(),
-                    imageUrl: doc.selectFirst(".anisc-poster .film-poster-img")?.attr("src"),
-                    description: doc.selectFirst(".anisc-detail .film-description")?.text()?.trim(),
-                    genres: doc.select(".anisc-detail .item-list a")?.map(el => el.text()?.trim()),
-                    status: doc.selectFirst(".anisc-detail .item-list span")?.text()?.trim(),
-                    chapters: episodes
+                    name: mainSection.selectFirst(".title")?.text()?.trim(),
+                    imageUrl: mainSection.selectFirst(".poster img")?.attr("src"),
+                    description: mainSection.selectFirst(".desc")?.text()?.trim(),
+                    genres: mainSection.select(".detail span:contains('Genres') + a")?.map(el => el.text()),
+                    status: this.parseStatus(mainSection.selectFirst(".detail span:contains('Status')")?.text()),
+                    chapters: await this.getEpisodes(doc)
                 };
             } catch (error) {
                 console.error("Detail error:", error);
@@ -75,12 +93,32 @@ const source = {
             }
         }
 
+        parseStatus(statusText) {
+            if (!statusText) return "Unknown";
+            if (statusText.includes("Ongoing")) return "Ongoing";
+            if (statusText.includes("Completed")) return "Completed";
+            return statusText.trim();
+        }
+
         async getEpisodes(doc) {
             try {
-                const items = doc.select(".ssl-item .ep-item") || [];
+                const animeId = doc.selectFirst("#anime-rating")?.attr("data-id");
+                if (!animeId) return [];
+
+                const token = await this.generateToken(animeId);
+                const apiUrl = `/ajax/episodes/list?ani_id=${animeId}&_=${token}`;
+                const json = await this.request(apiUrl);
+                if (!json) return [];
+
+                const data = JSON.parse(json);
+                if (data.status !== 200) return [];
+
+                const episodesDoc = new Document(data.result);
+                const items = episodesDoc.select(".eplist li") || [];
+                
                 return items.map(item => ({
-                    name: item.text()?.trim() || "Episode",
-                    url: item.getHref()
+                    name: `Episode ${item.attr("num")}`,
+                    url: item.selectFirst("a")?.attr("token")
                 })).reverse();
             } catch (error) {
                 console.error("Episodes error:", error);
@@ -88,27 +126,40 @@ const source = {
             }
         }
 
-        // ==================== VIDEO EXTRACTION ====================
-        async getVideoList(episodeUrl) {
-            try {
-                const body = await this.request(episodeUrl);
-                if (!body) return [];
+        async generateToken(id) {
+            // Simplified token generation - replace with actual logic if needed
+            return Date.now().toString();
+        }
 
-                const doc = new Document(body);
-                const servers = doc.select(".server-item") || [];
+        // ========== VIDEO EXTRACTION ==========
+        async getVideoList(episodeToken) {
+            try {
+                const token = await this.generateToken(episodeToken);
+                const apiUrl = `/ajax/links/list?token=${episodeToken}&_=${token}`;
+                const json = await this.request(apiUrl);
+                if (!json) return [];
+
+                const data = JSON.parse(json);
+                if (data.status !== 200) return [];
+
+                const serversDoc = new Document(data.result);
+                const servers = serversDoc.select(".server-items") || [];
                 const streams = [];
 
                 for (const server of servers) {
-                    const serverName = server.selectFirst(".server-name")?.text()?.trim();
-                    const dataId = server.attr("data-id");
+                    const serverType = server.attr("data-id");
+                    const serverItems = server.select("span.server") || [];
                     
-                    if (dataId) {
-                        const sources = await this.getServerSources(dataId);
-                        if (sources) {
+                    for (const item of serverItems) {
+                        const serverId = item.attr("data-lid");
+                        const serverName = item.text();
+                        
+                        const streamUrl = await this.getStreamUrl(serverId);
+                        if (streamUrl) {
                             streams.push({
-                                server: serverName,
+                                server: `${serverName} (${serverType})`,
                                 quality: "Auto",
-                                url: sources[0]?.file // Take first source
+                                url: streamUrl
                             });
                         }
                     }
@@ -121,35 +172,51 @@ const source = {
             }
         }
 
-        async getServerSources(serverId) {
+        async getStreamUrl(serverId) {
             try {
-                const res = await this.request(`/ajax/server/list/${serverId}`);
-                if (!res) return null;
-                
-                const data = JSON.parse(res);
-                return data?.sources || null;
+                const token = await this.generateToken(serverId);
+                const apiUrl = `/ajax/links/view?id=${serverId}&_=${token}`;
+                const json = await this.request(apiUrl);
+                if (!json) return null;
+
+                const data = JSON.parse(json);
+                return data.status === 200 ? data.result?.url : null;
             } catch (error) {
-                console.error("Server sources error:", error);
+                console.error("Stream URL error:", error);
                 return null;
             }
         }
 
-        // ==================== SETTINGS ====================
+        // ========== SETTINGS ==========
         getSourcePreferences() {
             return [{
-                key: "hianime_pref_server",
+                key: "animekai_pref_server",
                 listPreference: {
                     title: "Preferred Server",
-                    summary: "Choose default streaming server",
+                    summary: "Server to use for streaming",
                     valueIndex: 0,
-                    entries: ["Vidstreaming", "MyCloud", "StreamSB"],
-                    entryValues: ["vidstreaming", "mycloud", "streamsb"]
+                    entries: ["Server 1", "Server 2"],
+                    entryValues: ["1", "2"]
                 }
             }];
         }
 
         getFilterList() {
-            return [];
+            return [{
+                type_name: "GroupFilter",
+                name: "Content Type",
+                state: [{
+                    type_name: "CheckBox",
+                    name: "TV Series",
+                    value: "tv",
+                    state: true
+                }, {
+                    type_name: "CheckBox",
+                    name: "Movies",
+                    value: "movie",
+                    state: true
+                }]
+            }];
         }
     }
 };
