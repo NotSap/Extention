@@ -235,122 +235,91 @@ class DefaultExtension extends MProvider {
 
 async getVideoList(url) {
     try {
-        const streams = [];
-        const prefServer = this.getPreference("animekai_pref_stream_server") || ["1", "2", "3"];
-        const prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "softsub", "dub"];
+        var streams = [];
+        var prefServer = this.getPreference("animekai_pref_stream_server") || ["1", "2", "3"];
+        var prefDubType = this.getPreference("animekai_pref_stream_subdub_type") || ["sub", "dub"];
         
-        const epSlug = url.split("||");
-        let isUncensoredVersion = false;
+        var epSlug = url.split("||");
+        var isUncensoredVersion = false;
 
-        for (const epId of epSlug) {
-            const token = await this.kaiEncrypt(epId);
-            const res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
+        for (var epId of epSlug) {
+            var token = await this.kaiEncrypt(epId);
+            var res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
             if (!res) continue;
 
-            const body = JSON.parse(res);
+            var body = JSON.parse(res);
             if (body.status != 200) continue;
 
-            const serverResult = new Document(body.result);
-            const SERVERDATA = [];
+            var serverResult = new Document(body.result);
+            var SERVERDATA = [];
             
-            // Improved stream type detection
-            const serverContainers = serverResult.select("div.server-items") || [];
-            for (const container of serverContainers) {
-                // Get precise stream type
-                let streamType = container.attr("data-id")?.toLowerCase();
-                
-                // If data-id isn't clear, check container contents
-                if (!streamType || !["sub", "softsub", "dub"].includes(streamType)) {
-                    const containerText = container.text().toLowerCase();
-                    if (containerText.includes("dub")) {
-                        streamType = "dub";
-                    } else if (containerText.includes("softsub")) {
-                        streamType = "softsub";
+            // Improved server type detection
+            var serverItems = serverResult.select("div.server-items") || [];
+            for (var dubSection of serverItems) {
+                var dubType = dubSection.attr("data-id");
+                if (!dubType) {
+                    // Fallback type detection based on class names
+                    if (dubSection.className.includes("dub")) {
+                        dubType = "dub";
+                    } else if (dubSection.className.includes("sub")) {
+                        dubType = "sub";
                     } else {
-                        streamType = "sub"; // Default to sub if unclear
+                        dubType = "sub"; // Default to sub if unknown
                     }
                 }
 
-                if (!prefDubType.includes(streamType)) continue;
+                // Only process preferred types
+                if (!prefDubType.includes(dubType)) continue;
 
-                const servers = container.select("span.server") || [];
-                for (const server of servers) {
-                    const serverName = server.text.trim();
-                    const serverNum = serverName.replace("Server ", "");
+                var serverElements = dubSection.select("span.server") || [];
+                for (var ser of serverElements) {
+                    var serverName = ser.text.trim();
+                    var serverNum = serverName.replace("Server ", "");
                     if (!prefServer.includes(serverNum)) continue;
 
-                    const dataId = server.attr("data-lid");
+                    var dataId = ser.attr("data-lid");
                     if (dataId) {
                         SERVERDATA.push({
-                            serverName,
-                            dataId,
-                            streamType,
-                            isUncensored: isUncensoredVersion
+                            serverName: serverName,
+                            dataId: dataId,
+                            dubType: dubType.toLowerCase() // Ensure consistent casing
                         });
                     }
                 }
             }
 
-            // Process servers with precise type checking
-            for (const server of SERVERDATA) {
+            // Process each valid server
+            for (var serverData of SERVERDATA) {
                 try {
-                    const megaUrl = await this.getMegaUrl(server.dataId);
+                    var dubType = serverData.dubType === "sub" ? "SUB" : "DUB";
+                    if (isUncensoredVersion) {
+                        dubType += " [Uncensored]";
+                    }
+
+                    var megaUrl = await this.getMegaUrl(serverData.dataId);
                     if (!megaUrl) continue;
 
-                    // Verify stream type from URL if possible
-                    let verifiedType = server.streamType;
-                    if (megaUrl.includes("softsub")) {
-                        verifiedType = "softsub";
-                    } else if (megaUrl.includes("dub")) {
-                        verifiedType = "dub";
-                    }
-
-                    // Set proper type label
-                    let typeLabel;
-                    switch(verifiedType) {
-                        case "sub": 
-                            typeLabel = "HARDSUB"; 
-                            break;
-                        case "softsub": 
-                            typeLabel = "SOFTSUB"; 
-                            break;
-                        case "dub": 
-                            typeLabel = "DUB"; 
-                            break;
-                        default: 
-                            typeLabel = "SUB";
-                    }
-                    
-                    if (server.isUncensored) {
-                        typeLabel += " [Uncensored]";
-                    }
-
-                    const serverStreams = await this.decryptMegaEmbed(
-                        megaUrl,
-                        server.serverName,
-                        typeLabel
-                    );
-
-                    if (serverStreams?.length) {
-                        streams.push(...serverStreams);
+                    var serverStreams = await this.decryptMegaEmbed(megaUrl, serverData.serverName, dubType);
+                    if (serverStreams && serverStreams.length > 0) {
+                        streams = [...streams, ...serverStreams];
                         
-                        // Only add subtitles for actual DUB streams
-                        if (verifiedType === "dub" && megaUrl.includes("sub.list=")) {
+                        // Handle subtitles for DUB episodes
+                        if (dubType.includes("DUB") && megaUrl.includes("sub.list=")) {
                             try {
-                                const subList = megaUrl.split("sub.list=")[1];
-                                const subres = await this.client.get(subList);
-                                const subtitles = JSON.parse(subres.body);
-                                const subs = this.formatSubtitles(subtitles, typeLabel);
-                                if (streams.length) {
+                                var subList = megaUrl.split("sub.list=")[1];
+                                var subres = await this.client.get(subList);
+                                var subtitles = JSON.parse(subres.body);
+                                var subs = this.formatSubtitles(subtitles, dubType);
+                                if (streams.length > 0) {
                                     streams[streams.length - 1].subtitles = subs;
                                 }
                             } catch (e) {
-                                console.error("Subtitle error:", e);
+                                console.error("Subtitle load error:", e);
                             }
                         }
                     }
                 } catch (e) {
-                    console.error("Server processing failed:", server.serverName, e);
+                    console.error("Server processing error:", e);
                 }
             }
             isUncensoredVersion = true;
@@ -358,16 +327,31 @@ async getVideoList(url) {
 
         return streams.length > 0 ? streams : [{
             url: "",
-            name: "No servers available - Try enabling more options in settings"
+            name: "No streams available - try changing server preferences"
         }];
     } catch (error) {
         console.error("Video list error:", error);
         return [{
             url: "",
-            name: "Error loading streams"
+            name: "Error loading streams - try again later"
         }];
     }
 }
+
+
+    formatSubtitles(subtitles, dubType) {
+        var subs = [];
+        subtitles.forEach(sub => {
+            if (!sub.kind.includes("thumbnail")) {
+                subs.push({
+                    file: sub.file,
+                    label: `${sub.label} - ${dubType}`
+                });
+            }
+        });
+        return subs;
+    }
+
     async formatStreams(sUrl, serverName, dubType) {
         function streamNamer(res) {
             return `${res} - ${dubType} : ${serverName}`;
