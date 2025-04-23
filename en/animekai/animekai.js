@@ -40,19 +40,23 @@ class DefaultExtension extends MProvider {
         return res ? new Document(res) : null;
     }
 
-    // WORKING SEARCH FUNCTION (FROM YOUR SECOND CODE)
+    // FIXED SEARCH FUNCTION
     async search(query, page, filters) {
         try {
+            // Initialize filters as empty array if not provided
+            filters = filters || [];
+            
+            // Safely get filter values with proper null checks
             const filterValues = {
-                type: filters[0]?.state?.filter(f => f.state).map(f => f.value) || [],
-                genre: filters[1]?.state?.filter(f => f.state).map(f => f.value) || [],
-                status: filters[2]?.state?.filter(f => f.state).map(f => f.value) || [],
+                type: filters[0]?.state?.filter(f => f?.state).map(f => f.value) || [],
+                genre: filters[1]?.state?.filter(f => f?.state).map(f => f.value) || [],
+                status: filters[2]?.state?.filter(f => f?.state).map(f => f.value) || [],
                 sort: filters[3]?.values?.[filters[3]?.state]?.value || "updated_date",
-                season: filters[4]?.state?.filter(f => f.state).map(f => f.value) || [],
-                year: filters[5]?.state?.filter(f => f.state).map(f => f.value) || [],
-                rating: filters[6]?.state?.filter(f => f.state).map(f => f.value) || [],
-                country: filters[7]?.state?.filter(f => f.state).map(f => f.value) || [],
-                language: filters[8]?.state?.filter(f => f.state).map(f => f.value) || []
+                season: filters[4]?.state?.filter(f => f?.state).map(f => f.value) || [],
+                year: filters[5]?.state?.filter(f => f?.state).map(f => f.value) || [],
+                rating: filters[6]?.state?.filter(f => f?.state).map(f => f.value) || [],
+                country: filters[7]?.state?.filter(f => f?.state).map(f => f.value) || [],
+                language: filters[8]?.state?.filter(f => f?.state).map(f => f.value) || []
             };
 
             let slug = "/browser?keyword=" + encodeURIComponent(query);
@@ -120,7 +124,6 @@ class DefaultExtension extends MProvider {
         ]);
     }
 
-    // DETAIL FETCHING FROM YOUR FIRST 700+ LINE CODE
     async getDetail(url) {
         function statusCode(status) {
             return {
@@ -235,7 +238,6 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // VIDEO LIST FETCHING FROM YOUR FIRST 700+ LINE CODE
     async getVideoList(url) {
         try {
             var streams = [];
@@ -309,7 +311,6 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // REMAINING UTILITY FUNCTIONS FROM YOUR FIRST 700+ LINE CODE
     formatSubtitles(subtitles, dubType) {
         var subs = [];
         subtitles.forEach(sub => {
@@ -383,7 +384,6 @@ class DefaultExtension extends MProvider {
         return await this.formatStreams(url, serverName, dubType);
     }
 
-    // DECODER FUNCTIONS FROM YOUR FIRST 700+ LINE CODE
     base64UrlDecode(input) {
         let base64 = input
             .replace(/-/g, "+")
@@ -452,7 +452,7 @@ class DefaultExtension extends MProvider {
             w = (w + 1) % 256;
             sum = (sum + v[w]) % 256;
             [v[w], v[sum]] = [v[sum], v[w]];
-            f.push(String.fromCharCode(text.charCodeAt(a) ^ v[(v[w] + v[sum]) % 256]));
+            f.push(String.fromCharCode(text.charCodeAt(a) ^ v[(v[w] + v[sum]) % 256]);
             a++;
         }
         return f.join('');
@@ -516,7 +516,6 @@ class DefaultExtension extends MProvider {
         return JSON.parse(streamData);
     }
 
-    // FILTER LIST FROM YOUR FIRST 700+ LINE CODE
     getFilterList() {
         function formateState(type_name, items, values) {
             var state = [];
@@ -641,7 +640,6 @@ class DefaultExtension extends MProvider {
         return filters;
     }
 
-    // SETTINGS FROM YOUR FIRST 700+ LINE CODE
     getSourcePreferences() {
         return [
             {
@@ -712,4 +710,3 @@ class DefaultExtension extends MProvider {
 if (typeof module !== 'undefined') {
     module.exports = mangayomiSources;
 }
-
