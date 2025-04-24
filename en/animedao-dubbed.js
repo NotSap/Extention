@@ -1,7 +1,7 @@
 class AnimeDaoDubbed {
     constructor() {
         this.metadata = {
-            id: 987654323, // Must match your JSON ID
+            id: 987654323,
             name: "AnimeDao (Dubbed)",
             url: "https://animedao.com.ru/dubbed",
             type: "anime",
@@ -70,7 +70,7 @@ class AnimeDaoDubbed {
                 title: `Episode ${element.attr('data-jname')} (Dubbed)`,
                 url: this._absoluteUrl(element.find('a').attr('href'))
             };
-        }).get().reverse(); // Newest episodes first
+        }).get().reverse();
     }
 
     async _fetch(url) {
@@ -95,5 +95,12 @@ class AnimeDaoDubbed {
     }
 }
 
-const animeDaoDubbed = new AnimeDaoDubbed();
-return animeDaoDubbed;
+// Proper export for AnymeX
+if (typeof module !== 'undefined' && typeof module.exports !== 'undefined') {
+    module.exports = AnimeDaoDubbed;
+} else {
+    // For browser environment
+    if (typeof extension === 'undefined') {
+        var extension = new AnimeDaoDubbed();
+    }
+}
