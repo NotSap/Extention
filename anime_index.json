@@ -29,7 +29,7 @@
     "iconUrl":"https://raw.githubusercontent.com/kodjodevf/mangayomi-extensions/main/dart/anime/src/en/animepahe/icon.png",
     "dateFormat":"","dateFormatLocale":"",
     "isNsfw":false,"hasCloudflare":false,
-    "sourceCodeUrl":"https://raw.githubusercontent.com/NotSap/Extention/refs/heads/main/en/hianime.js",
+    "sourceCodeUrl":"https://raw.githubusercontent.com/kodjodevf/mangayomi-extensions/main/dart/anime/src/en/animepahe/animepahe.dart",
     "apiUrl":"","version":"0.0.5",
     "isManga":false,
     "itemType":1,
