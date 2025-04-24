@@ -1,98 +1,92 @@
-/**
- * @name AniWatchTV
- * @version 1.0.0
- * @description Extension for AniWatchTV to be used in Anymex (Mangayomi)
- */
-
 const BASE_URL = "https://aniwatchtv.to";
 
-async function getHtml(url) {
-  const response = await fetch(url);
-  const text = await response.text();
-  const parser = new DOMParser();
-  return parser.parseFromString(text, "text/html");
-}
+async function search(query) {
+  try {
+    const doc = await getHtml(`${BASE_URL}/search?keyword=${encodeURIComponent(query)}`);
+    const results = [];
 
-async function fetchAnimeInfo(animeUrl) {
-  const doc = await getHtml(animeUrl);
-  const title = doc.querySelector("h1")?.textContent.trim();
-  const description = doc.querySelector("p.synopsis")?.textContent.trim();
-  const thumbnailUrl = doc.querySelector(".anime-thumbnail img")?.src;
+    const cards = doc.querySelectorAll(".film_list-wrap .flw-item");
 
-  return {
-    title,
-    description,
-    thumbnailUrl,
-    episodes: await fetchEpisodes(animeUrl),
-  };
-}
+    if (!cards || cards.length === 0) {
+      throw new Error("No search results found or page structure may have changed.");
+    }
 
-async function fetchEpisodes(animeUrl) {
-  const doc = await getHtml(animeUrl);
-  const episodes = [];
-  const episodeElements = doc.querySelectorAll(".episodes li a");
+    cards.forEach((card) => {
+      const title = card.querySelector(".film-name a")?.textContent.trim();
+      const url = card.querySelector(".film-name a")?.href;
+      const thumbnailUrl = card.querySelector(".film-poster img")?.src;
 
-  episodeElements.forEach((el, i) => {
-    episodes.push({
-      number: i + 1,
-      title: el.textContent.trim(),
-      url: el.href,
+      if (title && url && thumbnailUrl) {
+        results.push({ title, url, thumbnailUrl });
+      }
     });
-  });
 
-  return episodes;
+    return results;
+  } catch (err) {
+    console.error("Search error:", err);
+    return [];
+  }
+}
+
+async function fetchAnimeInfo(url) {
+  try {
+    const doc = await getHtml(url);
+    const title = doc.querySelector("h2.film-name")?.textContent.trim() || "";
+    const description = doc.querySelector(".description")?.textContent.trim() || "";
+    const thumbnailUrl = doc.querySelector(".film-poster img")?.src || "";
+
+    return {
+      title,
+      description,
+      thumbnailUrl,
+      episodes: await fetchEpisodes(url)
+    };
+  } catch (err) {
+    console.error("fetchAnimeInfo error:", err);
+    return null;
+  }
+}
+
+async function fetchEpisodes(url) {
+  try {
+    const doc = await getHtml(url);
+    const episodeElements = doc.querySelectorAll(".episodes li a");
+    const episodes = [];
+
+    episodeElements.forEach((ep) => {
+      const epTitle = ep.textContent.trim();
+      const epUrl = ep.href;
+
+      if (epTitle && epUrl) {
+        episodes.push({ title: epTitle, url: epUrl });
+      }
+    });
+
+    return episodes;
+  } catch (err) {
+    console.error("fetchEpisodes error:", err);
+    return [];
+  }
 }
 
 async function loadEpisodeSources(episodeUrl) {
-  const doc = await getHtml(episodeUrl);
-  const scripts = doc.querySelectorAll("script");
-  let sources = [];
+  try {
+    const doc = await getHtml(episodeUrl);
+    const scriptTags = doc.querySelectorAll("script");
+    let sourceUrl = "";
 
-  scripts.forEach((script) => {
-    const content = script.textContent;
-    const match = content.match(/sources:\s*(\[[^\]]+\])/);
-    if (match) {
-      try {
-        sources = JSON.parse(match[1]);
-      } catch (e) {
-        console.error("Error parsing sources JSON:", e);
+    scriptTags.forEach((script) => {
+      if (script.textContent.includes("playerInstance") && script.textContent.includes("file")) {
+        const match = script.textContent.match(/file:\s*["'](https?:\/\/[^"']+)["']/);
+        if (match) sourceUrl = match[1];
       }
-    }
-  });
-
-  return sources.map((source) => ({
-    url: source.file,
-    quality: source.label,
-    isM3U8: source.file.includes(".m3u8"),
-  }));
-}
-
-async function fetchPopular() {
-  const doc = await getHtml(`${BASE_URL}/most-popular`);
-  const results = [];
-
-  doc.querySelectorAll(".anime-card").forEach((card) => {
-    results.push({
-      title: card.querySelector(".anime-title")?.textContent.trim(),
-      url: card.querySelector("a")?.href,
-      thumbnailUrl: card.querySelector("img")?.src,
     });
-  });
 
-  return results;
-}
+    if (!sourceUrl) throw new Error("No playable source found.");
 
-async function search(query) {
-  const doc = await getHtml(`${BASE_URL}/search?keyword=${encodeURIComponent(query)}`);
-  const results = [];
-
-  doc.querySelectorAll(".anime-card").forEach((card) => {
-    results.push({
-      title: card.querySelector(".anime-title")?.textContent.trim(),
-      url: card.querySelector("a")?.href,
-      thumbnailUrl: card.querySelector("img")?.src,
-    });
-  });
-
-  return results;
+    return [{ url: sourceUrl, quality: "default" }];
+  } catch (err) {
+    console.error("loadEpisodeSources error:", err);
+    return [];
+  }
 }
