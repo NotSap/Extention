@@ -59,24 +59,19 @@
     "sourceCodeLanguage":0
   },
   {
-  "name": "Hikari",
-  "id": 987654321,
-  "baseUrl": "https://hikari.gg",
+  "name": "Gogoanime (Dub)",
+  "id": 889900123,
+  "baseUrl": "https://api.consumet.org",
   "lang": "en",
-  "typeSource": "single",
-  "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hikari.gg/",
-  "dateFormat": "",
-  "dateFormatLocale": "",
+  "typeSource": "api",
+  "iconUrl": "https://gogoanime3.co/favicon.ico",
   "isNsfw": false,
-  "hasCloudflare": true,
-  "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/refs/heads/main/en/hakari.js",
-  "apiUrl": "",
-  "version": "1.0.0",
+  "hasCloudflare": false,
+  "sourceCodeUrl": "https://your-repo/gogoanime-dub.js",
+  "version": "4.2.0",
   "isManga": false,
   "itemType": 1,
   "isFullData": true,
-  "appMinVerReq": "0.5.0",
-  "additionalParams": "",
-  "sourceCodeLanguage": 1
+  "appMinVerReq": "0.5.0"
 }
 ]
