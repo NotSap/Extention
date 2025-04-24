@@ -74,7 +74,8 @@ class AniWatchTV {
   // ─────── Anime Details & Episode List ───────
   async getDetail(link) {
     // link comes in form "/anime/?anime_id=123&name=Foo"
-    const params = new URLSearchParams(link.split("?")[1]);
+    const queryPart = link.includes("?") ? link.split("?")[1] : "";
+const params = new URLSearchParams(queryPart);
     const animeId = params.get("anime_id");
     const animeName = params.get("name");
     const session = await this._getSession(animeName, animeId);
