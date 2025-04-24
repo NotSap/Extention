@@ -38,7 +38,8 @@
     "additionalParams":"",
     "sourceCodeLanguage":0
   }, 
-  {"name":"HiAnime",
+  {
+    "name":"HiAnime",
     "id":814067600,
     "baseUrl":"https://hianime.to",
     "lang":"en",
@@ -59,19 +60,23 @@
     "sourceCodeLanguage":0
   },
   {
-  "name": "Gogoanime (Dub)",
-  "id": 889900123,
-  "baseUrl": "https://api.consumet.org",
-  "lang": "en",
-  "typeSource": "api",
-  "iconUrl": "https://gogoanime3.co/favicon.ico",
-  "isNsfw": false,
-  "hasCloudflare": false,
-  "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/refs/heads/main/en/Gogoanime.js",
-  "version": "4.2.0",
-  "isManga": false,
-  "itemType": 1,
-  "isFullData": true,
-  "appMinVerReq": "0.5.0"
-}
+    "name":"AnimeGG",
+    
+    "id":209614032,
+    "baseUrl":"https://www.animegg.org",
+    "lang":"en",
+    "typeSource":"single",
+    "iconUrl":"https://www.google.com/s2/favicons?sz=256&domain=https://www.animegg.org/",
+    "dateFormat":"",
+    "dateFormatLocale":"",
+    "isNsfw":false,"hasCloudflare":false,
+    "sourceCodeUrl":"https://raw.githubusercontent.com/NotSap/Extention/refs/heads/main/en/animegg.js",
+    "apiUrl":"",
+    "version":"1.0.2",
+    "isManga":false,
+    "itemType":1,
+    "isFullData":false,
+    "appMinVerReq":"0.5.0",
+    "additionalParams":"",
+    "sourceCodeLanguage":1}
 ]
