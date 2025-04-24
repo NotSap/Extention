@@ -67,7 +67,7 @@
   "iconUrl": "https://gogoanime3.co/favicon.ico",
   "isNsfw": false,
   "hasCloudflare": false,
-  "sourceCodeUrl": "https://your-repo/gogoanime-dub.js",
+  "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/refs/heads/main/en/Gogoanime.js",
   "version": "4.2.0",
   "isManga": false,
   "itemType": 1,
