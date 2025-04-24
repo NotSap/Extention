@@ -1,85 +1,113 @@
 const mangayomiSources = [{
-    name: "Aniwatch (via Kitsu)",
+    name: "Aniwatch+Kitsu",
     lang: "en",
     baseUrl: "https://aniwatchtv.to",
     apiUrl: "https://kitsu.io/api/edge",
     iconUrl: "https://aniwatchtv.to/favicon.ico",
-    typeSource: "single",
+    typeSource: "hybrid",
     itemType: 1,
-    version: "1.0.1"
+    version: "1.0.2"
 }];
 
-class AniwatchKitsuProvider extends MProvider {
+class HybridProvider extends MProvider {
     constructor() {
         super();
         this.client = new Client({
             headers: {
-                'Referer': 'https://aniwatchtv.to/',
-                'Origin': 'https://aniwatchtv.to'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'X-Requested-With': 'XMLHttpRequest'
             }
         });
     }
 
-    // 1. Get metadata from Kitsu
-    async search(query, page) {
-        const kitsuUrl = `${this.source.apiUrl}/anime?filter[text]=${encodeURIComponent(query)}`;
-        const res = await this.client.get(kitsuUrl);
-        const data = JSON.parse(res.body);
+    // Required Methods
+    async search(query, page = 1) {
+        try {
+            const kitsuRes = await this.client.get(
+                `${this.source.apiUrl}/anime?` +
+                `filter[text]=${encodeURIComponent(query)}&` +
+                `page[limit]=20&page[offset]=${(page-1)*20}`
+            );
+            
+            const kitsuData = JSON.parse(kitsuRes.body);
+            return {
+                list: kitsuData.data.map(anime => ({
+                    name: anime.attributes.canonicalTitle,
+                    imageUrl: anime.attributes.posterImage?.medium || "",
+                    link: `anime/${anime.id}` // Using Kitsu ID temporarily
+                })),
+                hasNextPage: !!kitsuData.links?.next
+            };
+        } catch (e) {
+            console.error("Search failed:", e);
+            return { list: [], hasNextPage: false };
+        }
+    }
+
+    async getDetail(url) {
+        const kitsuId = url.split('/').pop();
+        const [kitsuRes, aniwatchRes] = await Promise.all([
+            this.client.get(`${this.source.apiUrl}/anime/${kitsuId}`),
+            this.client.get(`${this.source.baseUrl}/search?keyword=${encodeURIComponent(url.split('/')[1])}`)
+        ]);
+
+        const kitsuAnime = JSON.parse(kitsuRes.body).data;
+        const $ = cheerio.load(aniwatchRes.body);
         
+        const aniwatchId = $('.film_list-wrap .film-poster').first()
+            .attr('href').split('/')[2];
+
         return {
-            list: data.data.map(anime => ({
-                name: anime.attributes.canonicalTitle,
-                imageUrl: anime.attributes.posterImage?.medium || "",
-                link: `anime/${anime.attributes.slug}` // Using slug for Aniwatch search
-            })),
-            hasNextPage: data.meta.count > page * 20
+            title: kitsuAnime.attributes.canonicalTitle,
+            description: kitsuAnime.attributes.synopsis,
+            poster: kitsuAnime.attributes.posterImage?.large || "",
+            status: kitsuAnime.attributes.status === "current" ? 0 : 1,
+            episodes: await this.getEpisodes(aniwatchId)
         };
     }
 
-    // 2. Find matching Aniwatch ID
-    async getAniwatchId(kitsuSlug) {
-        const searchUrl = `${this.source.baseUrl}/search?keyword=${kitsuSlug}`;
-        const html = await this.client.get(searchUrl).then(r => r.text());
-        const $ = cheerio.load(html);
+    async getEpisodes(aniwatchId) {
+        const html = await this.client.get(
+            `${this.source.baseUrl}/ajax/v2/episode/list/${aniwatchId}`
+        ).then(r => r.text());
         
-        return $('.film_list-wrap .film-detail').first()
-            .find('a').attr('href').split('/')[2];
+        return JSON.parse(html.match(/<ul class="episodes">(.*?)<\/ul>/s)[0])
+            .querySelectorAll('li')
+            .map(ep => ({
+                id: ep.getAttribute('data-id'),
+                number: ep.querySelector('.episode-number').textContent,
+                title: ep.querySelector('.episode-title').textContent
+            }));
     }
 
-    // 3. Get episode streams from Aniwatch
-    async getVideoList(aniwatchUrl) {
-        const html = await this.client.get(`${this.source.baseUrl}${aniwatchUrl}`).then(r => r.text());
-        const $ = cheerio.load(html);
+    async getVideoList(episodeId) {
+        const servers = await this.client.get(
+            `${this.source.baseUrl}/ajax/v2/episode/servers?episodeId=${episodeId}`
+        ).then(r => JSON.parse(r.body));
         
-        const episodeScript = $('script:contains("episodes")').html();
-        const episodesData = JSON.parse(episodeScript.match(/var episodes = (\[.*?\])/)[1]);
+        const vidstreamId = servers.html.match(/data-id="([^"]+)"/)[1];
+        const sources = await this.client.get(
+            `${this.source.baseUrl}/ajax/v2/episode/sources?id=${vidstreamId}`
+        ).then(r => JSON.parse(r.body));
         
-        const streams = [];
-        for (const ep of episodesData) {
-            const embedUrl = `${this.source.baseUrl}/ajax/v2/episode/servers?episodeId=${ep.id}`;
-            const servers = await this.client.get(embedUrl).then(r => JSON.parse(r.body));
-            
-            const vidstreamServer = servers.html.match(/data-id="([^"]+)"/)[1];
-            const iframeUrl = `${this.source.baseUrl}/ajax/v2/episode/sources?id=${vidstreamServer}`;
-            
-            const sourceData = await this.client.get(iframeUrl).then(r => JSON.parse(r.body));
-            streams.push({
-                url: sourceData.link,
-                quality: "Auto",
-                headers: {
-                    Referer: sourceData.link,
-                    Origin: this.source.baseUrl
-                }
-            });
-        }
-        
-        return streams;
+        return [{
+            url: sources.link,
+            quality: "Auto",
+            headers: {
+                Referer: `${this.source.baseUrl}/`,
+                Origin: this.source.baseUrl
+            }
+        }];
     }
-
-    // Implement other required methods...
 }
 
+// Proper exports
 module.exports = {
     sources: mangayomiSources,
-    provider: AniwatchKitsuProvider
+    provider: HybridProvider,
+    // Explicitly export all required methods
+    search: HybridProvider.prototype.search,
+    getDetail: HybridProvider.prototype.getDetail,
+    getEpisodes: HybridProvider.prototype.getEpisodes,
+    getVideoList: HybridProvider.prototype.getVideoList
 };
