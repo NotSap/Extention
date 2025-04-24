@@ -1,106 +1,110 @@
-const mangayomiSources = [{
-    name: "Aniwatch",
-    lang: "en",
-    baseUrl: "https://aniwatchtv.to",
-    apiUrl: "https://aniwatchtv.to/ajax",
-    iconUrl: "https://aniwatchtv.to/favicon.ico",
-    typeSource: "single",
-    itemType: 1,
-    version: "1.0.0"
-}];
+const BASE_URL = "https://aniwatchtv.to";
 
-class AniwatchProvider extends MProvider {
-    constructor() {
-        super();
-        this.client = new Client({
-            headers: {
-                'Referer': 'https://aniwatchtv.to/',
-                'X-Requested-With': 'XMLHttpRequest'
-            }
-        });
-    }
+const settings = {
+  preferredQuality: "1080p", // Options: "1080p", "720p", "480p"
+};
 
-    async search(query, page) {
-        const searchUrl = `${this.source.baseUrl}/search?keyword=${encodeURIComponent(query)}`;
-        const html = await this.client.get(searchUrl).then(r => r.text());
-        const $ = cheerio.load(html);
-
-        const results = [];
-        $('.film_list-wrap .film-detail').each((i, el) => {
-            results.push({
-                id: $(el).find('a').attr('href').split('/')[2],
-                title: $(el).find('a').attr('title'),
-                thumbnail: $(el).closest('.film-poster').find('img').attr('data-src'),
-                year: $(el).find('.fd-infor span:nth-child(1)').text()
-            });
-        });
-
-        return { results, hasNextPage: false };
-    }
-
-    async getMediaDetails(id) {
-        const detailUrl = `${this.source.baseUrl}/ajax/v2/tv/info/${id}`;
-        const { body } = await this.client.get(detailUrl);
-        const data = JSON.parse(body);
-
-        return {
-            title: data.title,
-            description: data.description,
-            thumbnail: data.image,
-            status: data.status === 'Ongoing' ? 0 : 1,
-            genres: data.genres.map(g => g.name)
-        };
-    }
-
-    async getEpisodes(id) {
-        const episodesUrl = `${this.source.baseUrl}/ajax/v2/episode/list/${id}`;
-        const { body } = await this.client.get(episodesUrl);
-        const data = JSON.parse(body);
-
-        return data.html.match(/data-id="(\d+)"/g).map(match => ({
-            id: match.match(/"(\d+)"/)[1],
-            number: match.split('"')[1],
-            title: `Episode ${match.split('"')[1]}`
-        }));
-    }
-
-    async getStreams(episodeId) {
-        // Step 1: Get available servers
-        const serversUrl = `${this.source.baseUrl}/ajax/v2/episode/servers?episodeId=${episodeId}`;
-        const { body: serversBody } = await this.client.get(serversUrl);
-        const serversData = JSON.parse(serversBody);
-
-        // Step 2: Extract Vidstream server ID
-        const vidstreamId = serversData.html.match(/data-id="(\d+)"/)[1];
-
-        // Step 3: Get stream links
-        const sourcesUrl = `${this.source.baseUrl}/ajax/v2/episode/sources?id=${vidstreamId}`;
-        const { body: sourcesBody } = await this.client.get(sourcesUrl);
-        const sourcesData = JSON.parse(sourcesBody);
-
-        return [{
-            url: sourcesData.link,
-            quality: 'Auto',
-            headers: {
-                Referer: 'https://aniwatchtv.to/',
-                Origin: 'https://aniwatchtv.to'
-            }
-        }];
-    }
-
-    // For Mangayomi compatibility
-    async getVideoList(url) {
-        const episodeId = url.split('/').pop();
-        return this.getStreams(episodeId);
-    }
+async function getHtml(url) {
+  const response = await fetch(url);
+  const text = await response.text();
+  const parser = new DOMParser();
+  return parser.parseFromString(text, "text/html");
 }
 
-module.exports = {
-    sources: mangayomiSources,
-    provider: AniwatchProvider,
-    search: AniwatchProvider.prototype.search,
-    getMediaDetails: AniwatchProvider.prototype.getMediaDetails,
-    getEpisodes: AniwatchProvider.prototype.getEpisodes,
-    getStreams: AniwatchProvider.prototype.getStreams,
-    getVideoList: AniwatchProvider.prototype.getVideoList
-};
+async function search(query) {
+  try {
+    const doc = await getHtml(`${BASE_URL}/search?keyword=${encodeURIComponent(query)}`);
+    const results = [];
+
+    const cards = doc.querySelectorAll(".film_list-wrap .flw-item");
+    if (!cards || cards.length === 0) throw new Error("No anime found for search.");
+
+    cards.forEach((card) => {
+      const anchor = card.querySelector(".film-name a");
+      const img = card.querySelector(".film-poster img");
+
+      if (!anchor || !img) return;
+
+      results.push({
+        title: anchor.textContent?.trim() || "No Title",
+        url: anchor.href,
+        thumbnailUrl: img.getAttribute("data-src") || img.src
+      });
+    });
+
+    return results;
+  } catch (err) {
+    console.error("Search function failed:", err);
+    return [];
+  }
+}
+
+async function fetchAnimeInfo(url) {
+  try {
+    const doc = await getHtml(url);
+    const title = doc.querySelector("h2.film-name")?.textContent?.trim() || "";
+    const description = doc.querySelector(".description")?.textContent?.trim() || "";
+    const thumbnailUrl = doc.querySelector(".film-poster img")?.src || "";
+    const episodes = await fetchEpisodes(url);
+
+    return {
+      title,
+      description,
+      thumbnailUrl,
+      episodes
+    };
+  } catch (err) {
+    console.error("fetchAnimeInfo error:", err);
+    return null;
+  }
+}
+
+async function fetchEpisodes(url) {
+  try {
+    const doc = await getHtml(url);
+    const episodeElements = doc.querySelectorAll(".episodes li a");
+    const episodes = [];
+
+    episodeElements.forEach((ep) => {
+      const epTitle = ep.textContent.trim();
+      const epUrl = ep.href;
+
+      if (epTitle && epUrl) {
+        episodes.push({ title: epTitle, url: epUrl });
+      }
+    });
+
+    return episodes.reverse();
+  } catch (err) {
+    console.error("fetchEpisodes error:", err);
+    return [];
+  }
+}
+
+async function loadEpisodeSources(episodeUrl) {
+  try {
+    const doc = await getHtml(episodeUrl);
+    const iframe = doc.querySelector("iframe");
+    if (!iframe) return [];
+
+    const embedUrl = iframe.src.startsWith("http") ? iframe.src : `${BASE_URL}${iframe.src}`;
+    const embedDoc = await getHtml(embedUrl);
+    const sources = [];
+
+    embedDoc.querySelectorAll("source").forEach((source) => {
+      const quality = source.getAttribute("label") || "default";
+      if (quality === settings.preferredQuality) {
+        sources.push({
+          url: source.src,
+          quality,
+          isM3U8: source.src.includes(".m3u8")
+        });
+      }
+    });
+
+    return sources;
+  } catch (err) {
+    console.error("loadEpisodeSources error:", err);
+    return [];
+  }
+}
