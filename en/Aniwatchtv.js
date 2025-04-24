@@ -1,110 +1,85 @@
-const BASE_URL = "https://aniwatchtv.to";
+const mangayomiSources = [{
+    name: "Aniwatch (via Kitsu)",
+    lang: "en",
+    baseUrl: "https://aniwatchtv.to",
+    apiUrl: "https://kitsu.io/api/edge",
+    iconUrl: "https://aniwatchtv.to/favicon.ico",
+    typeSource: "single",
+    itemType: 1,
+    version: "1.0.1"
+}];
 
-const settings = {
-  preferredQuality: "1080p", // Options: "1080p", "720p", "480p"
-};
-
-async function getHtml(url) {
-  const response = await fetch(url);
-  const text = await response.text();
-  const parser = new DOMParser();
-  return parser.parseFromString(text, "text/html");
-}
-
-async function search(query) {
-  try {
-    const doc = await getHtml(`${BASE_URL}/search?keyword=${encodeURIComponent(query)}`);
-    const results = [];
-
-    const cards = doc.querySelectorAll(".film_list-wrap .flw-item");
-    if (!cards || cards.length === 0) throw new Error("No anime found for search.");
-
-    cards.forEach((card) => {
-      const anchor = card.querySelector(".film-name a");
-      const img = card.querySelector(".film-poster img");
-
-      if (!anchor || !img) return;
-
-      results.push({
-        title: anchor.textContent?.trim() || "No Title",
-        url: anchor.href,
-        thumbnailUrl: img.getAttribute("data-src") || img.src
-      });
-    });
-
-    return results;
-  } catch (err) {
-    console.error("Search function failed:", err);
-    return [];
-  }
-}
-
-async function fetchAnimeInfo(url) {
-  try {
-    const doc = await getHtml(url);
-    const title = doc.querySelector("h2.film-name")?.textContent?.trim() || "";
-    const description = doc.querySelector(".description")?.textContent?.trim() || "";
-    const thumbnailUrl = doc.querySelector(".film-poster img")?.src || "";
-    const episodes = await fetchEpisodes(url);
-
-    return {
-      title,
-      description,
-      thumbnailUrl,
-      episodes
-    };
-  } catch (err) {
-    console.error("fetchAnimeInfo error:", err);
-    return null;
-  }
-}
-
-async function fetchEpisodes(url) {
-  try {
-    const doc = await getHtml(url);
-    const episodeElements = doc.querySelectorAll(".episodes li a");
-    const episodes = [];
-
-    episodeElements.forEach((ep) => {
-      const epTitle = ep.textContent.trim();
-      const epUrl = ep.href;
-
-      if (epTitle && epUrl) {
-        episodes.push({ title: epTitle, url: epUrl });
-      }
-    });
-
-    return episodes.reverse();
-  } catch (err) {
-    console.error("fetchEpisodes error:", err);
-    return [];
-  }
-}
-
-async function loadEpisodeSources(episodeUrl) {
-  try {
-    const doc = await getHtml(episodeUrl);
-    const iframe = doc.querySelector("iframe");
-    if (!iframe) return [];
-
-    const embedUrl = iframe.src.startsWith("http") ? iframe.src : `${BASE_URL}${iframe.src}`;
-    const embedDoc = await getHtml(embedUrl);
-    const sources = [];
-
-    embedDoc.querySelectorAll("source").forEach((source) => {
-      const quality = source.getAttribute("label") || "default";
-      if (quality === settings.preferredQuality) {
-        sources.push({
-          url: source.src,
-          quality,
-          isM3U8: source.src.includes(".m3u8")
+class AniwatchKitsuProvider extends MProvider {
+    constructor() {
+        super();
+        this.client = new Client({
+            headers: {
+                'Referer': 'https://aniwatchtv.to/',
+                'Origin': 'https://aniwatchtv.to'
+            }
         });
-      }
-    });
+    }
 
-    return sources;
-  } catch (err) {
-    console.error("loadEpisodeSources error:", err);
-    return [];
-  }
+    // 1. Get metadata from Kitsu
+    async search(query, page) {
+        const kitsuUrl = `${this.source.apiUrl}/anime?filter[text]=${encodeURIComponent(query)}`;
+        const res = await this.client.get(kitsuUrl);
+        const data = JSON.parse(res.body);
+        
+        return {
+            list: data.data.map(anime => ({
+                name: anime.attributes.canonicalTitle,
+                imageUrl: anime.attributes.posterImage?.medium || "",
+                link: `anime/${anime.attributes.slug}` // Using slug for Aniwatch search
+            })),
+            hasNextPage: data.meta.count > page * 20
+        };
+    }
+
+    // 2. Find matching Aniwatch ID
+    async getAniwatchId(kitsuSlug) {
+        const searchUrl = `${this.source.baseUrl}/search?keyword=${kitsuSlug}`;
+        const html = await this.client.get(searchUrl).then(r => r.text());
+        const $ = cheerio.load(html);
+        
+        return $('.film_list-wrap .film-detail').first()
+            .find('a').attr('href').split('/')[2];
+    }
+
+    // 3. Get episode streams from Aniwatch
+    async getVideoList(aniwatchUrl) {
+        const html = await this.client.get(`${this.source.baseUrl}${aniwatchUrl}`).then(r => r.text());
+        const $ = cheerio.load(html);
+        
+        const episodeScript = $('script:contains("episodes")').html();
+        const episodesData = JSON.parse(episodeScript.match(/var episodes = (\[.*?\])/)[1]);
+        
+        const streams = [];
+        for (const ep of episodesData) {
+            const embedUrl = `${this.source.baseUrl}/ajax/v2/episode/servers?episodeId=${ep.id}`;
+            const servers = await this.client.get(embedUrl).then(r => JSON.parse(r.body));
+            
+            const vidstreamServer = servers.html.match(/data-id="([^"]+)"/)[1];
+            const iframeUrl = `${this.source.baseUrl}/ajax/v2/episode/sources?id=${vidstreamServer}`;
+            
+            const sourceData = await this.client.get(iframeUrl).then(r => JSON.parse(r.body));
+            streams.push({
+                url: sourceData.link,
+                quality: "Auto",
+                headers: {
+                    Referer: sourceData.link,
+                    Origin: this.source.baseUrl
+                }
+            });
+        }
+        
+        return streams;
+    }
+
+    // Implement other required methods...
 }
+
+module.exports = {
+    sources: mangayomiSources,
+    provider: AniwatchKitsuProvider
+};
