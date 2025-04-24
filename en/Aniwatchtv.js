@@ -1,113 +1,149 @@
 const mangayomiSources = [{
-    name: "Aniwatch+Kitsu",
+    name: "AnimeX-Hybrid",
     lang: "en",
     baseUrl: "https://aniwatchtv.to",
     apiUrl: "https://kitsu.io/api/edge",
-    iconUrl: "https://aniwatchtv.to/favicon.ico",
+    iconUrl: "https://i.imgur.com/JnX8WXV.png",
     typeSource: "hybrid",
     itemType: 1,
-    version: "1.0.2"
+    version: "2.1.0",
+    isAnimeX: true  // Special flag for AnymeX compatibility
 }];
 
-class HybridProvider extends MProvider {
+class AnimeXHybridProvider extends MProvider {
     constructor() {
         super();
+        this.cache = new Map();  // For caching Aniwatch IDs
         this.client = new Client({
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                'X-Requested-With': 'XMLHttpRequest'
-            }
+            interceptors: [
+                {
+                    request: (options) => {
+                        options.headers = {
+                            ...options.headers,
+                            'User-Agent': 'AnymeX/2.0 (+https://github.com/RyanYuuki/AnymeX)',
+                            'X-Requested-With': 'XMLHttpRequest'
+                        };
+                        return options;
+                    }
+                }
+            ]
         });
     }
 
-    // Required Methods
+    // ========================
+    // CORE ANYMEX INTEGRATION
+    // ========================
+    
     async search(query, page = 1) {
-        try {
-            const kitsuRes = await this.client.get(
-                `${this.source.apiUrl}/anime?` +
-                `filter[text]=${encodeURIComponent(query)}&` +
-                `page[limit]=20&page[offset]=${(page-1)*20}`
-            );
-            
-            const kitsuData = JSON.parse(kitsuRes.body);
-            return {
-                list: kitsuData.data.map(anime => ({
-                    name: anime.attributes.canonicalTitle,
-                    imageUrl: anime.attributes.posterImage?.medium || "",
-                    link: `anime/${anime.id}` // Using Kitsu ID temporarily
-                })),
-                hasNextPage: !!kitsuData.links?.next
-            };
-        } catch (e) {
-            console.error("Search failed:", e);
-            return { list: [], hasNextPage: false };
-        }
-    }
-
-    async getDetail(url) {
-        const kitsuId = url.split('/').pop();
-        const [kitsuRes, aniwatchRes] = await Promise.all([
-            this.client.get(`${this.source.apiUrl}/anime/${kitsuId}`),
-            this.client.get(`${this.source.baseUrl}/search?keyword=${encodeURIComponent(url.split('/')[1])}`)
-        ]);
-
-        const kitsuAnime = JSON.parse(kitsuRes.body).data;
-        const $ = cheerio.load(aniwatchRes.body);
+        const response = await this._kitsuRequest(`/anime?filter[text]=${encodeURIComponent(query)}&page[limit]=10&page[offset]=${(page-1)*10}`);
         
-        const aniwatchId = $('.film_list-wrap .film-poster').first()
-            .attr('href').split('/')[2];
-
         return {
-            title: kitsuAnime.attributes.canonicalTitle,
-            description: kitsuAnime.attributes.synopsis,
-            poster: kitsuAnime.attributes.posterImage?.large || "",
-            status: kitsuAnime.attributes.status === "current" ? 0 : 1,
-            episodes: await this.getEpisodes(aniwatchId)
+            results: await Promise.all(response.data.map(async anime => ({
+                id: anime.id,
+                title: anime.attributes.canonicalTitle,
+                thumbnail: anime.attributes.posterImage?.medium || "",
+                aniwatchId: await this._getAniwatchId(anime.attributes.canonicalTitle),
+                kitsuData: anime  // Preserve full Kitsu object
+            }))),
+            hasMore: !!response.links?.next
         };
     }
 
-    async getEpisodes(aniwatchId) {
-        const html = await this.client.get(
-            `${this.source.baseUrl}/ajax/v2/episode/list/${aniwatchId}`
-        ).then(r => r.text());
+    async getMedia(mediaId) {
+        const [kitsuRes, episodes] = await Promise.all([
+            this._kitsuRequest(`/anime/${mediaId}`),
+            this.getEpisodes(mediaId)
+        ]);
         
-        return JSON.parse(html.match(/<ul class="episodes">(.*?)<\/ul>/s)[0])
-            .querySelectorAll('li')
-            .map(ep => ({
-                id: ep.getAttribute('data-id'),
-                number: ep.querySelector('.episode-number').textContent,
-                title: ep.querySelector('.episode-title').textContent
-            }));
+        return {
+            ...kitsuRes.data.attributes,
+            episodes,
+            aniwatchId: await this._getAniwatchId(kitsuRes.data.attributes.canonicalTitle)
+        };
     }
 
-    async getVideoList(episodeId) {
-        const servers = await this.client.get(
-            `${this.source.baseUrl}/ajax/v2/episode/servers?episodeId=${episodeId}`
-        ).then(r => JSON.parse(r.body));
+    async getEpisodes(mediaId) {
+        const aniwatchId = await this.cache.get(mediaId) || 
+                           await this._getAniwatchId(mediaId);
         
-        const vidstreamId = servers.html.match(/data-id="([^"]+)"/)[1];
-        const sources = await this.client.get(
-            `${this.source.baseUrl}/ajax/v2/episode/sources?id=${vidstreamId}`
-        ).then(r => JSON.parse(r.body));
+        const { body } = await this.client.get(
+            `${this.baseUrl}/ajax/v2/episode/list/${aniwatchId}`
+        );
         
-        return [{
-            url: sources.link,
-            quality: "Auto",
-            headers: {
-                Referer: `${this.source.baseUrl}/`,
-                Origin: this.source.baseUrl
-            }
-        }];
+        return JSON.parse(body).episodes.map(ep => ({
+            id: ep.id,
+            number: ep.number,
+            title: ep.title || `Episode ${ep.number}`
+        }));
+    }
+
+    async getSources(episodeId) {
+        const { body } = await this.client.get(
+            `${this.baseUrl}/ajax/v2/episode/servers?episodeId=${episodeId}`
+        );
+        
+        const serverId = body.match(/data-id="([^"]+)"/)[1];
+        const { body: sources } = await this.client.get(
+            `${this.baseUrl}/ajax/v2/episode/sources?id=${serverId}`
+        );
+        
+        return {
+            sources: [{
+                url: sources.link,
+                quality: 'default',
+                headers: {
+                    Referer: this.baseUrl,
+                    Origin: this.baseUrl
+                }
+            }],
+            subtitles: []  // AnymeX expects this array
+        };
+    }
+
+    // ========================
+    // PRIVATE HELPERS
+    // ========================
+    
+    async _kitsuRequest(endpoint) {
+        const { body } = await this.client.get(`${this.apiUrl}${endpoint}`);
+        return JSON.parse(body);
+    }
+
+    async _getAniwatchId(title) {
+        if (this.cache.has(title)) return this.cache.get(title);
+        
+        const { body } = await this.client.get(
+            `${this.baseUrl}/search?keyword=${encodeURIComponent(title)}`
+        );
+        
+        const $ = cheerio.load(body);
+        const aniwatchId = $('.film_list-wrap .film-poster')
+            .first()
+            .attr('href')
+            .split('/')[2];
+            
+        this.cache.set(title, aniwatchId);
+        return aniwatchId;
     }
 }
 
-// Proper exports
+// ANYMEX-SPECIFIC EXPORTS
 module.exports = {
-    sources: mangayomiSources,
-    provider: HybridProvider,
-    // Explicitly export all required methods
-    search: HybridProvider.prototype.search,
-    getDetail: HybridProvider.prototype.getDetail,
-    getEpisodes: HybridProvider.prototype.getEpisodes,
-    getVideoList: HybridProvider.prototype.getVideoList
+    meta: {
+        identifier: 'animex-hybrid',
+        name: 'AnimeX Hybrid Source',
+        type: 'anime',
+        version: '2.1.0',
+        needsPackager: false
+    },
+    
+    // AnymeX required methods
+    search: AnimeXHybridProvider.prototype.search,
+    getMedia: AnimeXHybridProvider.prototype.getMedia,
+    getEpisodes: AnimeXHybridProvider.prototype.getEpisodes,
+    getSources: AnimeXHybridProvider.prototype.getSources,
+    
+    // Optional
+    getFilters: () => ({}),
+    applyFilter: (filter) => ({ results: [], hasMore: false })
 };
