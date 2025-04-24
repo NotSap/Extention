@@ -53,7 +53,6 @@ class DefaultExtension extends MProvider {
                     imageUrl,
                     link
                 });
-
             }
         }
         else {
@@ -85,24 +84,23 @@ class DefaultExtension extends MProvider {
                 category = "sortBy=sortLetter&sortDirection=ASC&";
                 break;
             }
-
         }
         var slug = `/popular-series?${category}start=${start}&limit=${limit}`
         return await this.fetchPopularnLatest(slug)
-
-
     }
+
     get supportsLatest() {
         throw new Error("supportsLatest not implemented");
     }
+    
     async getLatestUpdates(page) {
         var start = (page - 1) * 25;
         var limit = start + 25;
 
         var slug = `/releases?start=${start}&limit=${limit}`
         return await this.fetchPopularnLatest(slug)
-
     }
+
     async search(query, page, filters) {
         var slug = `/search?q=${query}`
         var body = await this.request(slug)
@@ -117,9 +115,7 @@ class DefaultExtension extends MProvider {
                 imageUrl,
                 link
             });
-
         }
-
         return { list, hasNextPage: false }
     }
 
@@ -132,7 +128,6 @@ class DefaultExtension extends MProvider {
 
     async getDetail(url) {
         var link = this.source.baseUrl + url;
-
         var body = await this.request(url)
 
         var media = body.selectFirst(".media")
@@ -140,7 +135,6 @@ class DefaultExtension extends MProvider {
         var spans = media.selectFirst("p.infoami").select("span")
         var statusText = spans[spans.length - 1].text.replace("Status: ", '')
         var status = this.statusCode(statusText)
-
 
         var tagscat = media.select(".tagscat > li")
         var genre = []
@@ -159,50 +153,43 @@ class DefaultExtension extends MProvider {
             var type = ep.select("span.btn-xs")
             type.forEach(t => {
                 scanlator += t.text + ", ";
-
             })
             scanlator = scanlator.slice(0, -2);
 
             chapters.push({ name: epName, url: epUrl, scanlator })
         })
 
-
         return { description, status, genre, chapters, link }
-
-
-
     }
 
-    async function exxtractStreams(div, audio) {
-    var slug = div.selectFirst("iframe").getSrc
-    var streams = []
-    if(slug.length < 1){
-        return streams;
-    }
-    var body = await this.requestText(slug)
-    var sKey = "var videoSources = "
-    var eKey = "var httpProtocol"
-    var start = body.indexOf(sKey) + sKey.length
-    var end = body.indexOf(eKey) - 8
-    var videoSourcesStr = body.substring(start, end)
-    let videoSources = eval("(" + videoSourcesStr + ")");
-    var headers = this.getHeaders();
-    videoSources.forEach(videoSource => {
-        var url = this.source.baseUrl + videoSource.file
-        var quality = `${videoSource.label} - ${audio}`
-        
-        streams.push({
-            url,
-            originalUrl: url,
-            quality,
-            headers
+    async exxtractStreams(div, audio) {
+        var slug = div.selectFirst("iframe").getSrc
+        var streams = []
+        if(slug.length < 1){
+            return streams;
+        }
+        var body = await this.requestText(slug)
+        var sKey = "var videoSources = "
+        var eKey = "var httpProtocol"
+        var start = body.indexOf(sKey) + sKey.length
+        var end = body.indexOf(eKey) - 8
+        var videoSourcesStr = body.substring(start, end)
+        let videoSources = eval("(" + videoSourcesStr + ")");
+        var headers = this.getHeaders();
+        videoSources.forEach(videoSource => {
+            var url = this.source.baseUrl + videoSource.file
+            var quality = `${videoSource.label} - ${audio}`
+            
+            streams.push({
+                url,
+                originalUrl: url,
+                quality,
+                headers
+            });
         });
-    });
-    // REMOVE THIS LINE: return streams.reverse();
-    return streams; // Just return all streams without reversing
-}
+        return streams; // Removed .reverse() to show all qualities
+    }
 
-    // For anime episode video list
     async getVideoList(url) {
         var body = await this.request(url)
         
@@ -215,8 +202,6 @@ class DefaultExtension extends MProvider {
         var raw = body.selectFirst("#raw-Animegg")
         var rawStreams = await this.exxtractStreams(raw,"Raw")
 
-
-
         var pref = this.getPreference("animegg_stream_type_1")
         var streams = [];
         if(pref == 0){
@@ -228,7 +213,6 @@ class DefaultExtension extends MProvider {
         }
        
         return streams
-
     }
 
     getSourcePreferences() {
@@ -256,3 +240,9 @@ class DefaultExtension extends MProvider {
         ]
     }
 }
+
+// Required exports for Mangayomi
+module.exports = {
+    sources: mangayomiSources,
+    provider: DefaultExtension
+};
