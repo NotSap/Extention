@@ -1,104 +1,44 @@
-const source = {
-    name: "Gogoanime (Dub)",
-    lang: "en",
-    baseUrl: "https://api.consumet.org",
-    iconUrl: "https://gogoanime3.co/favicon.ico",
-    typeSource: "api",
-    itemType: 1,
-    version: "4.2.1",
-    class: {
-        initialize: function() {
-            this.client = new Client({ timeout: 5000 });
-            this.dubProvider = "gogoanime";
-        },
+/**
+* AnimeGG - English
+*/
+async function getAnimeGGStreams({ fetch, cheerio, html, episodeId }) {
+    const $ = cheerio.load(html);
+    const script = $("script").toArray().find((el) => $(el).text().includes("sources"));
+    const { sources } = JSON.parse($(script).text().match(/{[^]*}/)[0]);
+    
+    const streams = sources.map((source) => ({
+        file: source.file,
+        type: source.type || "hls",
+        quality: source.label,
+    }));
 
-        search: function(query, page) {
-            page = page || 1;
-            try {
-                var response = this.client.get(
-                    this.baseUrl + "/anime/" + this.dubProvider + "/" + 
-                    encodeURIComponent(query) + "?page=" + page
-                );
-                var data = JSON.parse(response.body);
-                
-                return {
-                    list: data.results.filter(function(show) {
-                        return show.title.toLowerCase().includes("dub");
-                    }).map(function(show) {
-                        return {
-                            name: show.title.replace("(Dub)", "").trim(),
-                            link: show.url,
-                            imageUrl: show.image,
-                            isDub: true
-                        };
-                    }),
-                    hasNextPage: data.hasNextPage || false
-                };
-            } catch (error) {
-                console.log("Search error:", error);
-                return { list: [], hasNextPage: false };
-            }
-        },
-
-        getLatestUpdates: function(page) {
-            page = page || 1;
-            try {
-                var response = this.client.get(
-                    this.baseUrl + "/anime/" + this.dubProvider + 
-                    "/recent-episodes?type=2&page=" + page
-                );
-                return JSON.parse(response.body).results.map(function(ep) {
-                    return {
-                        name: ep.title.replace("(Dub)", "").trim() + " - Ep " + ep.episodeNumber,
-                        link: ep.url,
-                        imageUrl: ep.image,
-                        isDub: true
-                    };
-                });
-            } catch (error) {
-                console.log("Latest episodes error:", error);
-                return [];
-            }
-        },
-
-        getVideoList: function(episodeUrl) {
-            try {
-                var episodeId = episodeUrl.split('/').pop();
-                var response = this.client.get(
-                    this.baseUrl + "/anime/" + this.dubProvider + 
-                    "/watch/" + episodeId
-                );
-                var data = JSON.parse(response.body);
-                
-                return data.sources.map(function(source) {
-                    return {
-                        server: source.quality.includes("720") ? "GogoServer HD" : "GogoServer",
-                        quality: source.quality,
-                        url: source.url,
-                        isDub: true
-                    };
-                });
-            } catch (error) {
-                console.log("Stream error:", error);
-                return [];
-            }
-        },
-
-        getSourcePreferences: function() {
-            return [{
-                key: "preferred_quality",
-                listPreference: {
-                    title: "Video Quality",
-                    summary: "720p recommended",
-                    valueIndex: 1,
-                    entries: ["1080p", "720p", "480p"],
-                    entryValues: ["1080", "720", "480"]
-                }
-            }];
-        }
-    }
-};
-
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = [source];
+    return { streams };
 }
+
+async function getAnimeGGInfo({ fetch, cheerio, html }) {
+    const $ = cheerio.load(html);
+    const title = $(".single-anime-desktop h1").text().trim();
+    const description = $(".anime-synopsis").text().trim();
+    const poster = $(".anime-poster img").attr("src");
+    
+    const episodes = [];
+    $(".episodes-range li a").each((i, el) => {
+        episodes.push({
+            id: $(el).attr("href").split("/").pop(),
+            number: parseInt($(el).text().trim()),
+            title: `Episode ${$(el).text().trim()}`,
+        });
+    });
+    
+    return { title, description, poster, episodes };
+}
+
+module.exports = {
+    getAnimeGGStreams,
+    getAnimeGGInfo,
+    version: "0.0.1",
+    lang: "en",
+    name: "animegg",
+    icon: "https://animegg.org/wp-content/uploads/2021/06/cropped-favicon-32x32.png",
+    class: "anime",
+};
