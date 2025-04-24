@@ -168,3 +168,91 @@ class DefaultExtension extends MProvider {
 
 
         return { description, status, genre, chapters, link }
+
+
+
+    }
+
+    async exxtractStreams(div,audio){
+    
+        var slug = div.selectFirst("iframe").getSrc
+        var streams = []
+        if(slug.length < 1){
+            return streams;
+        }
+        var body = await this.requestText(slug)
+        var sKey = "var videoSources = "
+        var eKey = "var httpProtocol"
+        var start = body.indexOf(sKey) + sKey.length
+        var end = body.indexOf(eKey) - 8
+        var videoSourcesStr = body.substring(start, end)
+        let videoSources = eval("(" + videoSourcesStr + ")");
+        var headers = this.getHeaders();
+        videoSources.forEach(videoSource => {
+            var url = this.source.baseUrl +videoSource.file
+            var quality = `${videoSource.label} - ${audio}`
+
+            streams.push({
+                url,
+                originalUrl: url,
+                quality,
+                headers
+            });
+        });
+        return streams.reverse();
+    }
+
+    // For anime episode video list
+    async getVideoList(url) {
+        var body = await this.request(url)
+        
+        var sub = body.selectFirst("#subbed-Animegg")
+        var subStreams = await this.exxtractStreams(sub,"Sub")
+
+        var dub = body.selectFirst("#dubbed-Animegg")
+        var dubStreams = await this.exxtractStreams(dub,"Dub")
+
+        var raw = body.selectFirst("#raw-Animegg")
+        var rawStreams = await this.exxtractStreams(raw,"Raw")
+
+
+
+        var pref = this.getPreference("animegg_stream_type_1")
+        var streams = [];
+        if(pref == 0){
+            streams = [...subStreams,...dubStreams, ...rawStreams]
+        }else if(pref == 1){
+            streams = [...dubStreams,...subStreams, ...rawStreams]
+        }else{
+            streams = [...rawStreams,...subStreams, ...dubStreams]
+        }
+       
+        return streams
+
+    }
+
+    getSourcePreferences() {
+        return [
+            {
+                key: "animegg_popular_category",
+                listPreference: {
+                    title: 'Preferred popular category',
+                    summary: '',
+                    valueIndex: 0,
+                    entries: ["Popular", "Newest", "Ongoing", "Completed", "Alphabetical"],
+                    entryValues: ["0", "1", "2", "3", "4"]
+                }
+            },
+            {
+                key: "animegg_stream_type_1",
+                listPreference: {
+                    title: 'Preferred stream type',
+                    summary: '',
+                    valueIndex: 0,
+                    entries: ["Sub","Dub","Raw"],
+                    entryValues: ["0", "1", "2"]
+                }
+            }
+        ]
+    }
+}
