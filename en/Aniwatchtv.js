@@ -58,42 +58,58 @@ class AniWatchTV {
 
   // ─────── Search ───────
   async search(query, page = 1) {
-    const url = `${this.baseUrl}/api?m=search&l=12&q=${encodeURIComponent(query)}`;
-    const json = await (await this.client(url, { headers: this.headers })).json();
+  const url = `${this.baseUrl}/api?m=search&l=12&q=${encodeURIComponent(query)}`;
+  try {
+    const response = await this.client(url, { headers: this.headers });
+    const json = await response.json();
 
-    // no paging on search, so always hasNext = false
-    const list = (json.data || []).map(item => ({
-      title: item.title,
-      url:   `/anime/?anime_id=${item.id}&name=${encodeURIComponent(item.title)}`,
-      imageUrl: item.poster
+    if (!json || !json.data || !Array.isArray(json.data)) {
+      console.error("Invalid or empty search response:", json);
+      return { list: [], hasNext: false };
+    }
+
+    const list = json.data.map(item => ({
+      title: item.title || item.anime_title || "Unknown Title",
+      url: `/anime/?anime_id=${item.id}&name=${encodeURIComponent(item.title || "unknown")}`,
+      imageUrl: item.poster || item.snapshot || ""
     }));
 
     return { list, hasNext: false };
+  } catch (err) {
+    console.error("Search error:", err);
+    return { list: [], hasNext: false };
   }
-
-  // ─────── Anime Details & Episode List ───────
-  async getDetail(link) {
-    // link comes in form "/anime/?anime_id=123&name=Foo"
+}
+async getDetail(link) {
+  try {
     const queryPart = link.includes("?") ? link.split("?")[1] : "";
-const params = new URLSearchParams(queryPart);
+    const params = new URLSearchParams(queryPart);
+
     const animeId = params.get("anime_id");
     const animeName = params.get("name");
-    const session = await this._getSession(animeName, animeId);
 
-    // Detail page parse (if needed) or skip to episode API:
+    if (!animeId || !animeName) {
+      console.error("Invalid link passed to getDetail:", link);
+      return null;
+    }
+
+    const session = await this._getSession(animeName, animeId);
     const epUrl = `${this.baseUrl}/api?m=release&id=${session}&sort=episode_asc&page=1`;
     const episodes = await this._recursiveEpisodes(epUrl, session);
 
     return {
-      title:       animeName,
-      description: "",     // aniwatchtv.to doesn’t return synopsis via API
-      imageUrl:    "",     // same for poster
-      status:      null,
-      genres:      [],
+      title: animeName,
+      description: "",
+      imageUrl: "",
+      status: null,
+      genres: [],
       episodes
     };
+  } catch (err) {
+    console.error("getDetail error:", err);
+    return null;
   }
-
+}
   async _getSession(name, animeId) {
     // grab the internal "session" token needed for release API
     const url = `${this.baseUrl}/api?m=search&q=${encodeURIComponent(name)}`;
