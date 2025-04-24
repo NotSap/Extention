@@ -12,65 +12,77 @@ class AnimeDaoDubbed {
         this.baseUrl = this.metadata.url;
     }
 
+    // Search method
     async search(query, page = 1) {
-        const searchUrl = `${this.baseUrl}/search.html?keyword=${encodeURIComponent(query)}&page=${page}`;
-        const data = await this._fetch(searchUrl);
-        const $ = this.cheerio.load(data);
-        
-        return $('div.anime-list div.anime-item').map((i, el) => {
-            const element = $(el);
-            return {
-                id: element.find('a').attr('href'),
-                title: element.find('h5').text().trim() + " (Dubbed)",
-                thumbnail: element.find('img').attr('data-src') || element.find('img').attr('src'),
-                url: this._absoluteUrl(element.find('a').attr('href'))
-            };
-        }).get();
+        try {
+            const searchUrl = `${this.baseUrl}/search.html?keyword=${encodeURIComponent(query)}&page=${page}`;
+            const data = await this._fetch(searchUrl);
+            const $ = this.cheerio.load(data);
+            
+            return $('div.anime-list div.anime-item').map((i, el) => ({
+                id: $(el).find('a').attr('href'),
+                title: $(el).find('h5').text().trim() + " (Dubbed)",
+                thumbnail: $(el).find('img').attr('data-src') || $(el).find('img').attr('src'),
+                url: this._absoluteUrl($(el).find('a').attr('href'))
+            })).get();
+        } catch (error) {
+            console.error('Search error:', error);
+            return [];
+        }
     }
 
+    // Other required methods (getAnimeDetails, getEpisodeSources, etc.)
     async getAnimeDetails(id) {
-        const data = await this._fetch(id);
-        const $ = this.cheerio.load(data);
-        
-        return {
-            id: id,
-            title: $('h1.title').text().trim() + " (Dubbed)",
-            description: $('div.anime-details p').text().trim(),
-            thumbnail: $('div.anime-info-poster img').attr('src'),
-            genres: $('div.anime-info-genres a').map((i, el) => $(el).text().trim()).get(),
-            status: this._parseStatus($('div.anime-info-status:contains(Status) + div').text().trim()),
-            episodes: await this._getEpisodes(id)
-        };
+        try {
+            const data = await this._fetch(id);
+            const $ = this.cheerio.load(data);
+            
+            return {
+                id: id,
+                title: $('h1.title').text().trim() + " (Dubbed)",
+                description: $('div.anime-details p').text().trim(),
+                thumbnail: $('div.anime-info-poster img').attr('src'),
+                genres: $('div.anime-info-genres a').map((i, el) => $(el).text().trim()).get(),
+                status: this._parseStatus($('div.anime-info-status:contains(Status) + div').text().trim()),
+                episodes: await this._getEpisodes(id)
+            };
+        } catch (error) {
+            console.error('Anime details error:', error);
+            return null;
+        }
     }
 
     async getEpisodeSources(episodeId) {
-        const data = await this._fetch(episodeId);
-        const $ = this.cheerio.load(data);
-        const iframeUrl = $('#video-player').attr('src');
-        
-        return {
-            sources: [{
-                url: iframeUrl,
-                quality: 'default',
-                isM3U8: iframeUrl.includes('.m3u8')
-            }],
-            subtitles: []
-        };
+        try {
+            const data = await this._fetch(episodeId);
+            const $ = this.cheerio.load(data);
+            const iframeUrl = $('#video-player').attr('src');
+            
+            return {
+                sources: [{
+                    url: iframeUrl,
+                    quality: 'default',
+                    isM3U8: iframeUrl.includes('.m3u8')
+                }],
+                subtitles: []
+            };
+        } catch (error) {
+            console.error('Episode sources error:', error);
+            return { sources: [], subtitles: [] };
+        }
     }
 
+    // Helper methods
     async _getEpisodes(id) {
         const data = await this._fetch(id);
         const $ = this.cheerio.load(data);
         
-        return $('ul.episodes-range li').map((i, el) => {
-            const element = $(el);
-            return {
-                id: element.find('a').attr('href'),
-                number: parseFloat(element.attr('data-jname')) || 0,
-                title: `Episode ${element.attr('data-jname')} (Dubbed)`,
-                url: this._absoluteUrl(element.find('a').attr('href'))
-            };
-        }).get().reverse();
+        return $('ul.episodes-range li').map((i, el) => ({
+            id: $(el).find('a').attr('href'),
+            number: parseFloat($(el).attr('data-jname')) || 0,
+            title: `Episode ${$(el).attr('data-jname')} (Dubbed)`,
+            url: this._absoluteUrl($(el).find('a').attr('href'))
+        })).get().reverse();
     }
 
     async _fetch(url) {
@@ -95,12 +107,10 @@ class AnimeDaoDubbed {
     }
 }
 
-// Proper export for AnymeX
-if (typeof module !== 'undefined' && typeof module.exports !== 'undefined') {
-    module.exports = AnimeDaoDubbed;
+// Proper initialization and export
+if (typeof require !== 'undefined' && typeof exports !== 'undefined') {
+    exports.create = () => new AnimeDaoDubbed();
 } else {
     // For browser environment
-    if (typeof extension === 'undefined') {
-        var extension = new AnimeDaoDubbed();
-    }
+    window.animeDaoDubbed = new AnimeDaoDubbed();
 }
