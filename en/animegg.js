@@ -173,34 +173,34 @@ class DefaultExtension extends MProvider {
 
     }
 
-    async exxtractStreams(div,audio){
-    
-        var slug = div.selectFirst("iframe").getSrc
-        var streams = []
-        if(slug.length < 1){
-            return streams;
-        }
-        var body = await this.requestText(slug)
-        var sKey = "var videoSources = "
-        var eKey = "var httpProtocol"
-        var start = body.indexOf(sKey) + sKey.length
-        var end = body.indexOf(eKey) - 8
-        var videoSourcesStr = body.substring(start, end)
-        let videoSources = eval("(" + videoSourcesStr + ")");
-        var headers = this.getHeaders();
-        videoSources.forEach(videoSource => {
-            var url = this.source.baseUrl +videoSource.file
-            var quality = `${videoSource.label} - ${audio}`
-
-            streams.push({
-                url,
-                originalUrl: url,
-                quality,
-                headers
-            });
-        });
-        return streams.reverse();
+    async function exxtractStreams(div, audio) {
+    var slug = div.selectFirst("iframe").getSrc
+    var streams = []
+    if(slug.length < 1){
+        return streams;
     }
+    var body = await this.requestText(slug)
+    var sKey = "var videoSources = "
+    var eKey = "var httpProtocol"
+    var start = body.indexOf(sKey) + sKey.length
+    var end = body.indexOf(eKey) - 8
+    var videoSourcesStr = body.substring(start, end)
+    let videoSources = eval("(" + videoSourcesStr + ")");
+    var headers = this.getHeaders();
+    videoSources.forEach(videoSource => {
+        var url = this.source.baseUrl + videoSource.file
+        var quality = `${videoSource.label} - ${audio}`
+        
+        streams.push({
+            url,
+            originalUrl: url,
+            quality,
+            headers
+        });
+    });
+    // REMOVE THIS LINE: return streams.reverse();
+    return streams; // Just return all streams without reversing
+}
 
     // For anime episode video list
     async getVideoList(url) {
