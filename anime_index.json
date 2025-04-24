@@ -57,5 +57,26 @@
     "appMinVerReq":"0.5.0",
     "additionalParams":"",
     "sourceCodeLanguage":0
-  }
+  },
+  {
+  "name": "Hikari",
+  "id": 987654321,
+  "baseUrl": "https://hikari.gg",
+  "lang": "en",
+  "typeSource": "single",
+  "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://hikari.gg/",
+  "dateFormat": "",
+  "dateFormatLocale": "",
+  "isNsfw": false,
+  "hasCloudflare": true,
+  "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/mangayomi-extensions/main/dart/anime/src/en/hikari/hikari.js",
+  "apiUrl": "",
+  "version": "1.0.0",
+  "isManga": false,
+  "itemType": 1,
+  "isFullData": true,
+  "appMinVerReq": "0.5.0",
+  "additionalParams": "",
+  "sourceCodeLanguage": 1
+}
 ]
