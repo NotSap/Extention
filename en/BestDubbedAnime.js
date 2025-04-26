@@ -46,8 +46,8 @@ async function fetchLatest() {
   return [];
 }
 
-// IMPORTANT: Set it on globalThis
-globalThis.extension = {
+// Create the extension object first
+const extension = {
   id: "bestdubbedanime",
   name: "BestDubbedAnime",
   baseUrl: baseUrl,
@@ -62,3 +62,6 @@ globalThis.extension = {
   fetchPopular: fetchPopular,
   fetchLatest: fetchLatest
 };
+
+// Then assign it to globalThis
+globalThis.extension = extension;
