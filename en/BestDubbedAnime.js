@@ -14,9 +14,9 @@ async function search(query) {
     const title = match[3];
 
     results.push({
-      title,
+      title: title,
       url: link,
-      image
+      image: image
     });
   }
 
@@ -46,18 +46,19 @@ async function fetchLatest() {
   return [];
 }
 
-const extension = {
+// IMPORTANT: Set it on globalThis
+globalThis.extension = {
   id: "bestdubbedanime",
   name: "BestDubbedAnime",
-  baseUrl,
+  baseUrl: baseUrl,
   lang: "en",
   version: "1.0.0",
   icon: "https://www.google.com/s2/favicons?sz=64&domain=bestdubbedanime.com",
   isAdult: false,
-  search,
-  fetchAnimeInfo,
-  fetchEpisodes,
-  loadEpisodeSources,
-  fetchPopular,
-  fetchLatest
+  search: search,
+  fetchAnimeInfo: fetchAnimeInfo,
+  fetchEpisodes: fetchEpisodes,
+  loadEpisodeSources: loadEpisodeSources,
+  fetchPopular: fetchPopular,
+  fetchLatest: fetchLatest
 };
