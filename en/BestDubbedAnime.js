@@ -14,9 +14,9 @@ async function search(query) {
     const title = match[3];
 
     results.push({
-      title: title,
+      title,
       url: link,
-      image: image,
+      image
     });
   }
 
@@ -46,7 +46,7 @@ async function fetchLatest() {
   return [];
 }
 
-export default {
+const extension = {
   id: "bestdubbedanime",
   name: "BestDubbedAnime",
   baseUrl,
