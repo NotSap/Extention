@@ -1,138 +1,156 @@
-const baseUrl = 'https://bestdubbedanime.com';
-const headers = { 'User-Agent': 'Mozilla/5.0', 'Referer': baseUrl };
+const BASE_URL = "https://bestdubbedanime.com";
 
-/** Fetch popular anime (home page or paged). */
+async function search(query, metadata) {
+    const searchUrl = `${BASE_URL}/?s=${encodeURIComponent(query)}`;
+    const res = await request(searchUrl);
+    const doc = new DOMParser().parseFromString(res, "text/html");
+
+    const animeList = [];
+    const cards = doc.querySelectorAll(".result-item");
+
+    for (const card of cards) {
+        const titleElement = card.querySelector(".post-title a");
+        const imgElement = card.querySelector("img");
+
+        if (!titleElement || !imgElement) continue;
+
+        const title = titleElement.textContent.trim();
+        const url = titleElement.getAttribute("href");
+        const thumbnail = imgElement.getAttribute("src");
+
+        animeList.push({
+            title,
+            url,
+            thumbnail,
+        });
+    }
+
+    return animeList;
+}
+
 async function fetchPopular(page) {
-  // Build URL: first page = base, other pages = /page/n
-  const url = page > 1 ? `${baseUrl}/page/${page}` : baseUrl;
-  const response = await fetch(url, { headers });
-  const document = await response.text().then(t => new DOMParser().parseFromString(t, 'text/html'));
-  // Select anime cards
-  const items = Array.from(document.querySelectorAll('div.grid > div.grid__item'));
-  const animes = [];
-  for (const item of items) {
-    // Title (from H4 link)
-    const titleEl = item.querySelector('div.tinywells > div > h4');
-    const title = titleEl ? titleEl.textContent.trim() : null;
-    // URL of anime detail
-    const linkEl = item.querySelector('div.tinywells > div > h4 a');
-    const urlPath = linkEl ? linkEl.getAttribute('href') : null;
-    // Thumbnail image
-    let thumb = null;
-    const imgEl = item.querySelector('img');
-    if (imgEl) {
-      thumb = imgEl.getAttribute('data-src') || imgEl.getAttribute('src');
+    const res = await request(`${BASE_URL}/series/`);
+    const doc = new DOMParser().parseFromString(res, "text/html");
+
+    const animeList = [];
+    const cards = doc.querySelectorAll(".series-boxes a");
+
+    for (const card of cards) {
+        const title = card.querySelector(".series-title")?.textContent?.trim();
+        const url = card.getAttribute("href");
+        const thumbnail = card.querySelector("img")?.getAttribute("src");
+
+        if (!title || !url) continue;
+
+        animeList.push({
+            title,
+            url,
+            thumbnail,
+        });
     }
-    if (title && urlPath) {
-      animes.push({ title, url: urlPath, thumbnail: thumb });
-    }
-  }
-  return {
-    animes: animes,
-    hasNextPage: animes.length > 0
-  };
+
+    return {
+        list: animeList,
+        hasNextPage: false,
+    };
 }
 
-/** Fetch detailed anime info (title, description, genres, thumbnail). */
-async function fetchAnimeInfo(animeUrl) {
-  const fullUrl = animeUrl.startsWith('http') ? animeUrl : (baseUrl + animeUrl);
-  const response = await fetch(fullUrl, { headers });
-  const document = await response.text().then(t => new DOMParser().parseFromString(t, 'text/html'));
-  // Title
-  const titleEl = document.querySelector('div.titlekf');
-  const title = titleEl ? titleEl.textContent.trim() : null;
-  // Description (if exists)
-  const descEl = document.querySelector('div[itemprop="description"]') || document.querySelector('div.mw-content-ltr');
-  const desc = descEl ? descEl.textContent.trim() : '';
-  // Thumbnail (if a cover image present)
-  let thumbnail = null;
-  const thumbEl = document.querySelector('div.mv_img > img');
-  if (thumbEl) {
-    thumbnail = thumbEl.getAttribute('data-src') || thumbEl.getAttribute('src');
-  }
-  // Genres/tags from itemprop=keywords
-  const genreEls = document.querySelectorAll('div[itemprop="keywords"] > a');
-  const genres = Array.from(genreEls).map(el => el.textContent.trim()).filter(g => g);
-  return {
-    anime: {
-      title: title || '',
-      desc: desc,
-      thumbnail: thumbnail,
-      genres: genres
+async function fetchLatest(page) {
+    const res = await request(`${BASE_URL}/latest-episodes/`);
+    const doc = new DOMParser().parseFromString(res, "text/html");
+
+    const animeList = [];
+    const cards = doc.querySelectorAll(".episode-box a");
+
+    for (const card of cards) {
+        const title = card.querySelector(".episode-title")?.textContent?.trim();
+        const url = card.getAttribute("href");
+        const thumbnail = card.querySelector("img")?.getAttribute("src");
+
+        if (!title || !url) continue;
+
+        animeList.push({
+            title,
+            url,
+            thumbnail,
+        });
     }
-  };
+
+    return {
+        list: animeList,
+        hasNextPage: false,
+    };
 }
 
-/** Fetch episode list for an anime (from its detail page). */
-async function fetchEpisodeList(animeUrl) {
-  const fullUrl = animeUrl.startsWith('http') ? animeUrl : (baseUrl + animeUrl);
-  const response = await fetch(fullUrl, { headers });
-  const document = await response.text().then(t => new DOMParser().parseFromString(t, 'text/html'));
-  const episodes = [];
-  // Episodes are also listed in div.grid__item, similar to popular
-  const items = Array.from(document.querySelectorAll('div.grid > div.grid__item'));
-  for (const item of items) {
-    const epEl = item.querySelector('div.tinywells > div > h4');
-    const name = epEl ? epEl.textContent.trim() : null;
-    const linkEl = item.querySelector('div.tinywells > div > h4 a');
-    const urlPath = linkEl ? linkEl.getAttribute('href') : null;
-    if (name && urlPath) {
-      episodes.push({ name, url: urlPath });
-    }
-  }
-  return { episodes };
+async function fetchAnimeInfo(url) {
+    const res = await request(url);
+    const doc = new DOMParser().parseFromString(res, "text/html");
+
+    const title = doc.querySelector("h1")?.textContent?.trim();
+    const thumbnail = doc.querySelector(".series-thumb img")?.getAttribute("src");
+
+    const descriptionElement = doc.querySelector(".series-description p");
+    const description = descriptionElement ? descriptionElement.textContent.trim() : "";
+
+    const genres = [];
+    const genreElements = doc.querySelectorAll(".series-genres a");
+    genreElements.forEach((el) => genres.push(el.textContent.trim()));
+
+    return {
+        title,
+        thumbnail,
+        description,
+        genres,
+    };
 }
 
-/** Load episode video sources from the episode page. */
+async function fetchEpisodes(url) {
+    const res = await request(url);
+    const doc = new DOMParser().parseFromString(res, "text/html");
+
+    const episodeList = [];
+    const episodes = doc.querySelectorAll(".episode-list a");
+
+    for (const episode of episodes) {
+        const name = episode.querySelector(".episode-title")?.textContent?.trim();
+        const epUrl = episode.getAttribute("href");
+
+        if (!name || !epUrl) continue;
+
+        episodeList.push({
+            name,
+            url: epUrl,
+        });
+    }
+
+    return episodeList.reverse();
+}
+
 async function loadEpisodeSources(episodeUrl) {
-  const fullUrl = episodeUrl.startsWith('http') ? episodeUrl : (baseUrl + episodeUrl);
-  const response = await fetch(fullUrl, { headers });
-  const document = await response.text().then(t => new DOMParser().parseFromString(t, 'text/html'));
-  const sources = [];
-  // Look for iframe(s) containing the video
-  const frames = Array.from(document.querySelectorAll('iframe'));
-  for (const frame of frames) {
-    const src = frame.getAttribute('src');
-    if (src) {
-      // Quality label could be inferred or left generic
-      sources.push({ url: src, name: 'Stream', isM3U8: src.endsWith('.m3u8') });
+    const res = await request(episodeUrl);
+    const doc = new DOMParser().parseFromString(res, "text/html");
+
+    const videoList = [];
+    const iframe = doc.querySelector("iframe");
+
+    if (iframe) {
+        const src = iframe.getAttribute("src");
+        if (src) {
+            videoList.push({
+                url: src,
+                quality: "Unknown",
+            });
+        }
     }
-  }
-  return sources;
+
+    return videoList;
 }
 
-/** Search for anime by name. */
-async function search(query) {
-  const url = `${baseUrl}/?s=${encodeURIComponent(query)}`;
-  const response = await fetch(url, { headers });
-  const document = await response.text().then(t => new DOMParser().parseFromString(t, 'text/html'));
-  const items = Array.from(document.querySelectorAll('div.grid > div.grid__item'));
-  const results = [];
-  for (const item of items) {
-    const titleEl = item.querySelector('div.tinywells > div > h4');
-    const title = titleEl ? titleEl.textContent.trim() : null;
-    const linkEl = item.querySelector('div.tinywells > div > h4 a');
-    const urlPath = linkEl ? linkEl.getAttribute('href') : null;
-    let thumb = null;
-    const imgEl = item.querySelector('img');
-    if (imgEl) {
-      thumb = imgEl.getAttribute('data-src') || imgEl.getAttribute('src');
-    }
-    if (title && urlPath) {
-      results.push({ title, url: urlPath, thumbnail: thumb });
-    }
-  }
-  return {
-    animes: results,
-    hasNextPage: false
-  };
-}
-
-// Export all functions in Mangayomi-compatible way
 module.exports = {
-  fetchPopular,
-  fetchAnimeInfo,
-  fetchEpisodeList,
-  loadEpisodeSources,
-  search
+    search,
+    fetchPopular,
+    fetchLatest,
+    fetchAnimeInfo,
+    fetchEpisodes,
+    loadEpisodeSources,
 };
