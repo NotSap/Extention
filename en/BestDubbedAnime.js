@@ -1,56 +1,109 @@
-globalThis.extension = {
-  name: "BestDubbedAnime",
-  id: 123456789,
-  iconUrl: "https://www.google.com/s2/favicons?sz=256&domain=bestdubbedanime.com",
-  baseUrl: "https://bestdubbedanime.com",
-  lang: "en",
-  isAdult: false,
-  version: "1.0.0",
-  extra: {},
-  
-  search: async function (query) {
-    const url = `${this.baseUrl}/xz/searchgrid.php?p=1&limit=12&s=${encodeURIComponent(query)}&_=${Date.now()}`;
-    const res = await fetch(url);
-    const html = await res.text();
-    const results = [];
+/** @type {import("@mangayomi/mangayomi-sources").AnimeScraper} */
+class BestDubbedAnime extends AnimeScraper {
+  constructor() {
+    super();
+    this.baseUrl = "https://bestdubbedanime.com";
+  }
 
-    const regex = /<a href="([^"]+)"[^>]*>(?:[\s\S]*?)<img[^>]*src="([^"]+)"[^>]*>(?:[\s\S]*?)<div class="gridtitlek">([^<]+)<\/div>/g;
-    let match;
-    while ((match = regex.exec(html)) !== null) {
-      const link = match[1].startsWith("http") ? match[1] : this.baseUrl + match[1];
-      const image = match[2].startsWith("http") ? match[2] : this.baseUrl + match[2];
-      const title = match[3];
+  async fetchPopularAnime(page) {
+    const url = `${this.baseUrl}/series?page=${page}`;
+    const res = await this.request(url);
+    const doc = this.parser.parseFromString(res, "text/html");
+    const elements = doc.querySelectorAll(".col-lg-2.col-md-3.col-6");
+
+    const results = [];
+    elements.forEach(el => {
+      const title = el.querySelector("h6")?.textContent?.trim() ?? "";
+      const href = el.querySelector("a")?.getAttribute("href") ?? "";
+      const img = el.querySelector("img")?.getAttribute("src") ?? "";
 
       results.push({
-        title: title,
-        url: link,
-        image: image
+        title,
+        url: this.baseUrl + href,
+        thumbnailUrl: img.startsWith("http") ? img : this.baseUrl + img
       });
+    });
+
+    return this.createPaginatedResults(results, false);
+  }
+
+  async fetchSearchAnime(search, page) {
+    const url = `${this.baseUrl}/search?keyword=${encodeURIComponent(search)}`;
+    const res = await this.request(url);
+    const doc = this.parser.parseFromString(res, "text/html");
+    const elements = doc.querySelectorAll(".col-lg-2.col-md-3.col-6");
+
+    const results = [];
+    elements.forEach(el => {
+      const title = el.querySelector("h6")?.textContent?.trim() ?? "";
+      const href = el.querySelector("a")?.getAttribute("href") ?? "";
+      const img = el.querySelector("img")?.getAttribute("src") ?? "";
+
+      results.push({
+        title,
+        url: this.baseUrl + href,
+        thumbnailUrl: img.startsWith("http") ? img : this.baseUrl + img
+      });
+    });
+
+    return this.createPaginatedResults(results, false);
+  }
+
+  async fetchAnimeInfo(url) {
+    const res = await this.request(url);
+    const doc = this.parser.parseFromString(res, "text/html");
+
+    const title = doc.querySelector(".anime__details__title h3")?.textContent?.trim() ?? "No Title";
+    const description = doc.querySelector(".anime__details__text p")?.textContent?.trim() ?? "";
+    const thumbnailUrl = doc.querySelector(".anime__details__pic img")?.getAttribute("src") ?? "";
+
+    return {
+      title,
+      description,
+      thumbnailUrl: thumbnailUrl.startsWith("http") ? thumbnailUrl : this.baseUrl + thumbnailUrl,
+      episodes: await this.fetchEpisodes(url)
+    };
+  }
+
+  async fetchEpisodes(url) {
+    const res = await this.request(url);
+    const doc = this.parser.parseFromString(res, "text/html");
+    const epElements = doc.querySelectorAll(".episode");
+
+    const episodes = [];
+    epElements.forEach((el, index) => {
+      const href = el.querySelector("a")?.getAttribute("href") ?? "";
+      const episodeNumber = index + 1;
+
+      episodes.push({
+        name: `Episode ${episodeNumber}`,
+        url: this.baseUrl + href,
+        number: episodeNumber
+      });
+    });
+
+    return episodes;
+  }
+
+  async loadVideoSources(episodeUrl) {
+    const res = await this.request(episodeUrl);
+    const doc = this.parser.parseFromString(res, "text/html");
+
+    const videoEl = doc.querySelector("iframe");
+    const videoUrl = videoEl?.getAttribute("src") ?? "";
+
+    if (!videoUrl) {
+      return [];
     }
 
-    return results;
-  },
-
-  fetchAnimeInfo: async function (url) {
-    return {
-      title: "Coming soon...",
-      episodes: [],
-    };
-  },
-
-  fetchEpisodes: async function (url) {
-    return [];
-  },
-
-  loadEpisodeSources: async function (url) {
-    return [];
-  },
-
-  fetchPopular: async function () {
-    return [];
-  },
-
-  fetchLatest: async function () {
-    return [];
+    return [
+      {
+        url: videoUrl,
+        quality: "Default",
+        isM3U8: videoUrl.includes(".m3u8")
+      }
+    ];
   }
-};
+}
+
+export default BestDubbedAnime;
