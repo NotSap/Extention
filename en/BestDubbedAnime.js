@@ -5,58 +5,39 @@ const extension = {
   isManga: false,
   isNsfw: false,
   headers: {},
-  
+
   search: async (query, page, { fetch }) => {
-    const url = `https://bestdubbedanime.com/?s=${encodeURIComponent(query)}`;
-    const res = await fetch(url);
-    const html = await res.text();
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    
-    const elements = [...doc.querySelectorAll(".post")];
-
-    const results = elements.map((el) => {
-      const title = el.querySelector(".post-title a")?.textContent?.trim() || "No title";
-      const cover = el.querySelector("img")?.getAttribute("src") || "";
-      const link = el.querySelector(".post-title a")?.getAttribute("href") || "";
-
-      return {
-        title: title,
-        url: link,
-        cover: cover,
-      };
-    });
-
-    return { results };
+    // This will later be improved for real search
+    return { results: [] };
   },
 
   fetchAnimeInfo: async (url, { fetch }) => {
-    const res = await fetch(url);
-    const html = await res.text();
-    const doc = new DOMParser().parseFromString(html, "text/html");
+    return {
+      title: "Example Anime",
+      description: "Description not available.",
+      image: "",
+      genres: [],
+      status: "",
+      episodes: [],
+    };
+  },
 
-    const title = doc.querySelector("h1")?.textContent?.trim() || "No Title";
-
-    const episodes = [...doc.querySelectorAll(".episodes-list a")].map((ep) => ({
-      title: ep.textContent.trim(),
-      url: ep.href,
-    }));
-
-    return { title, episodes };
+  fetchEpisodes: async (url, { fetch }) => {
+    return [];
   },
 
   loadEpisodeSources: async (url, { fetch }) => {
-    const res = await fetch(url);
-    const html = await res.text();
-    const doc = new DOMParser().parseFromString(html, "text/html");
+    return [];
+  },
 
-    const iframe = doc.querySelector("iframe");
-    if (!iframe) throw new Error("No video iframe found.");
-
+  getSettings: () => {
     return [
       {
-        url: iframe.src,
-        quality: "Unknown",
-        isM3U8: iframe.src.includes(".m3u8"),
+        key: "preferredQuality",
+        type: "picker",
+        name: "Preferred Quality",
+        options: ["1080p", "720p", "480p"],
+        defaultValue: "1080p",
       },
     ];
   },
