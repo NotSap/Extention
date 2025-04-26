@@ -1,69 +1,112 @@
-{
-  "name": "BestDubbedAnime",
-  "id": "bestdubbedanime",
-  "version": 1,
-  "baseUrl": "https://bestdubbedanime.com",
-  "language": "en",
-  "isDub": true,
-  "type": "anime",
-  "apis": {
-    "popular": {
-      "url": "/xz/trending.php?_=${timestamp}",
-      "list": "li",
-      "item": {
-        "id": "a@href | split('/')[3]",
-        "title": "div.cittx",
-        "url": "a@href",
-        "image": "img@src"
-      }
-    },
-    "latest": {
-      "url": "/xz/gridgrabrecent.php?p=${page}&limit=12&_=${timestamp}",
-      "list": "div.grid > div.grid__item",
-      "item": {
-        "id": "a@href | split('/')[3]",
-        "title": "div.tixtlis",
-        "url": "a@href",
-        "image": "img@src"
-      }
-    },
-    "search": {
-      "url": "/xz/searchgrid.php?p=${page}&limit=12&s=${query}&_=${timestamp}",
-      "list": "div.grid > div.grid__item",
-      "item": {
-        "id": "a@href | split('/')[3]",
-        "title": "div.tixtlis",
-        "url": "a@href",
-        "image": "img@src"
-      }
-    },
-    "info": {
-      "url": "/movies/jsonMovie.php?slug=${id}&_=${timestamp}",
-      "data": "$.result.anime[0]",
-      "fields": {
-        "title": "title",
-        "description": "desc",
-        "status": "status | replace('Ongoing', 'ONGOING') | replace('Completed', 'COMPLETED')",
-        "genres": "tags | split(',')"
-      }
-    },
-    "episodes": {
-      "url": "/xz/v3/jsonEpi.php?slug=${id}&_=${timestamp}",
-      "list": "div.serversks",
-      "item": {
-        "name": "text()",
-        "videoUrl": "$baseUrl/xz/api/playeri.php?url=@hl&_=${timestamp}",
-        "quality": "source@label"
-      }
+/** @type {import("@mangayomi/mangayomi-sources").AnimeScraper} */
+class BestDubbedAnime extends AnimeScraper {
+  constructor() {
+    super();
+    this.baseUrl = "https://bestdubbedanime.com";
+  }
+
+  async fetchPopularAnime(page) {
+    const url = `${this.baseUrl}/series?page=${page}`;
+    const res = await this.request(url);
+    const doc = this.parser.parseFromString(res, "text/html");
+    const elements = doc.querySelectorAll(".col-lg-2.col-md-3.col-6");
+
+    const results = [];
+    elements.forEach(el => {
+      const title = el.querySelector("h6")?.textContent?.trim() ?? "";
+      const href = el.querySelector("a")?.getAttribute("href") ?? "";
+      const img = el.querySelector("img")?.getAttribute("src") ?? "";
+
+      results.push({
+        title,
+        url: this.baseUrl + href,
+        thumbnailUrl: img.startsWith("http") ? img : this.baseUrl + img
+      });
+    });
+
+    return this.createPaginatedResults(results, false);
+  }
+
+  async fetchSearchAnime(search, page) {
+    const popular = await this.fetchPopularAnime(1); // Always search from page 1
+    const searchLower = search.toLowerCase();
+    const results = popular.results.filter(anime =>
+      anime.title.toLowerCase().includes(searchLower)
+    );
+
+    return this.createPaginatedResults(results, false);
+  }
+
+  async fetchAnimeInfo(url) {
+    const res = await this.request(url);
+    const doc = this.parser.parseFromString(res, "text/html");
+
+    const title = doc.querySelector(".anime__details__title h3")?.textContent?.trim() ?? "No Title";
+    const description = doc.querySelector(".anime__details__text p")?.textContent?.trim() ?? "";
+    const thumbnailUrl = doc.querySelector(".anime__details__pic img")?.getAttribute("src") ?? "";
+
+    return {
+      title,
+      description,
+      thumbnailUrl: thumbnailUrl.startsWith("http") ? thumbnailUrl : this.baseUrl + thumbnailUrl,
+      episodes: await this.fetchEpisodes(url)
+    };
+  }
+
+  async fetchEpisodes(url) {
+    const res = await this.request(url);
+    const doc = this.parser.parseFromString(res, "text/html");
+    const epElements = doc.querySelectorAll(".episode");
+
+    const episodes = [];
+    epElements.forEach((el, index) => {
+      const href = el.querySelector("a")?.getAttribute("href") ?? "";
+      const episodeNumber = index + 1;
+
+      episodes.push({
+        name: `Episode ${episodeNumber}`,
+        url: this.baseUrl + href,
+        number: episodeNumber
+      });
+    });
+
+    return episodes;
+  }
+
+  async loadVideoSources(episodeUrl) {
+    const res = await this.request(episodeUrl);
+    const doc = this.parser.parseFromString(res, "text/html");
+
+    const videoEl = doc.querySelector("iframe");
+    const videoUrl = videoEl?.getAttribute("src") ?? "";
+
+    if (!videoUrl) {
+      return [];
     }
-  },
-  "settings": [
-    {
-      "key": "preferred_quality",
-      "title": "Preferred Quality",
-      "type": "list",
-      "options": ["1080", "720", "480", "360", "240"],
-      "default": "1080"
-    }
-  ]
+
+    return [
+      {
+        url: videoUrl,
+        quality: "Default",
+        isM3U8: videoUrl.includes(".m3u8")
+      }
+    ];
+  }
+
+  getSettings() {
+    return [
+      {
+        type: "header",
+        label: "BestDubbedAnime Settings"
+      },
+      {
+        type: "switch",
+        key: "sortAZ",
+        label: "Sort A-Z in Popular",
+        defaultValue: false
+      }
+    ];
+  }
 }
+
+export default BestDubbedAnime;
