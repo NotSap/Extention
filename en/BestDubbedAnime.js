@@ -1,12 +1,13 @@
 globalThis.extension = {
   name: "BestDubbedAnime",
   id: 123456789,
-  iconUrl: "https://www.google.com/s2/favicons?sz=256&domain=https://bestdubbedanime.com",
+  iconUrl: "https://www.google.com/s2/favicons?sz=256&domain=bestdubbedanime.com",
   baseUrl: "https://bestdubbedanime.com",
   lang: "en",
   isAdult: false,
   version: "1.0.0",
   extra: {},
+  
   search: async function (query) {
     const url = `${this.baseUrl}/xz/searchgrid.php?p=1&limit=12&s=${encodeURIComponent(query)}&_=${Date.now()}`;
     const res = await fetch(url);
@@ -29,21 +30,26 @@ globalThis.extension = {
 
     return results;
   },
+
   fetchAnimeInfo: async function (url) {
     return {
       title: "Coming soon...",
       episodes: [],
     };
   },
+
   fetchEpisodes: async function (url) {
     return [];
   },
+
   loadEpisodeSources: async function (url) {
     return [];
   },
+
   fetchPopular: async function () {
     return [];
   },
+
   fetchLatest: async function () {
     return [];
   }
