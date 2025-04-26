@@ -7,7 +7,7 @@ const extension = {
   headers: {},
 
   search: async (query, page, { fetch }) => {
-    // This will later be improved for real search
+    // Temporary empty search
     return { results: [] };
   },
 
@@ -42,3 +42,5 @@ const extension = {
     ];
   },
 };
+
+export default extension;
