@@ -1,57 +1,48 @@
-const baseUrl = "https://bestdubbedanime.com";
-
 const extension = {
   id: "bestdubbedanime",
   name: "BestDubbedAnime",
   icon: "https://www.google.com/s2/favicons?sz=64&domain=bestdubbedanime.com",
   version: "1.0.0",
-  baseUrl: baseUrl,
+  baseUrl: "https://bestdubbedanime.com",
   isAdult: false,
   lang: "en",
 
   async search(query) {
-    const url = `${baseUrl}/xz/searchgrid.php?p=1&limit=12&s=${encodeURIComponent(query)}&_=${Date.now()}`;
-    const res = await fetch(url);
-    const html = await res.text();
-    const results = [];
-
-    const regex = /<a href="([^"]+)"[^>]*>(?:[\s\S]*?)<img[^>]*src="([^"]+)"[^>]*>(?:[\s\S]*?)<div class="gridtitlek">([^<]+)<\/div>/g;
-    let match;
-    while ((match = regex.exec(html)) !== null) {
-      const link = match[1].startsWith("http") ? match[1] : baseUrl + match[1];
-      const image = match[2].startsWith("http") ? match[2] : baseUrl + match[2];
-      const title = match[3];
-
-      results.push({
-        title: title,
-        url: link,
-        image: image,
-      });
-    }
-
-    return results;
+    const url = `${this.baseUrl}/search?query=${encodeURIComponent(query)}`;
+    const response = await fetch(url);
+    const html = await response.text();
+    // Parse HTML and return search results
+    return [];
   },
 
   async fetchAnimeInfo(url) {
-    return {
-      title: "Coming soon...",
-      episodes: [],
-    };
+    const response = await fetch(url);
+    const html = await response.text();
+    // Parse HTML and return anime info
+    return {};
   },
 
   async fetchEpisodes(url) {
+    const response = await fetch(url);
+    const html = await response.text();
+    // Parse HTML and return episodes
     return [];
   },
 
   async loadEpisodeSources(url) {
+    const response = await fetch(url);
+    const html = await response.text();
+    // Parse HTML and return video sources
     return [];
   },
 
   async fetchPopular() {
+    // Implement fetching popular anime
     return [];
   },
 
   async fetchLatest() {
+    // Implement fetching latest anime
     return [];
   }
 };
