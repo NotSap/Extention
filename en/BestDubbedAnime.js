@@ -27,27 +27,15 @@ class BestDubbedAnime extends AnimeScraper {
     return this.createPaginatedResults(results, false);
   }
 
-  async fetchSearchAnime(search, page) {
-    const url = `${this.baseUrl}/search?keyword=${encodeURIComponent(search)}`;
-    const res = await this.request(url);
-    const doc = this.parser.parseFromString(res, "text/html");
-    const elements = doc.querySelectorAll(".col-lg-2.col-md-3.col-6");
+async fetchSearchAnime(search, page) {
+  const popular = await this.fetchPopularAnime(page);
+  const searchLower = search.toLowerCase();
+  const results = popular.results.filter(anime =>
+    anime.title.toLowerCase().includes(searchLower)
+  );
 
-    const results = [];
-    elements.forEach(el => {
-      const title = el.querySelector("h6")?.textContent?.trim() ?? "";
-      const href = el.querySelector("a")?.getAttribute("href") ?? "";
-      const img = el.querySelector("img")?.getAttribute("src") ?? "";
-
-      results.push({
-        title,
-        url: this.baseUrl + href,
-        thumbnailUrl: img.startsWith("http") ? img : this.baseUrl + img
-      });
-    });
-
-    return this.createPaginatedResults(results, false);
-  }
+  return this.createPaginatedResults(results, false);
+}
 
   async fetchAnimeInfo(url) {
     const res = await this.request(url);
