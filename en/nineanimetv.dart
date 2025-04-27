@@ -10,38 +10,44 @@ class NineAnimeTV extends MProvider {
   final bool isNsfw = false;
   final String baseUrl = "https://9animetv.to";
 
+  // Universal request method that works with Anymex
+  Future<dynamic> _makeRequest(String url, {Map<String, String>? headers}) async {
+    try {
+      // Try Anymex's native request method first
+      return await MProvider.invokeMethod('request', {'url': url, 'headers': headers ?? {}});
+    } catch (e) {
+      // Fallback to standard method if native fails
+      final res = await request(url, headers: headers);
+      return res;
+    }
+  }
+
   @override
   Future<MPages> getPopular(MSource source, int page) async {
-    final res = await request("$baseUrl/filter?sort=views&page=$page");
-    final items = parse(res.body)
+    final res = await _makeRequest("$baseUrl/filter?sort=views&page=$page");
+    final body = res is String ? res : res.body;
+    final items = parse(body)
         .select('.film-list .film-item')
-        .map((e) {
-          final title = e.select('.film-name a').attr('title') ?? '';
-          final url = e.select('.film-name a').attr('href') ?? '';
-          final cover = e.select('.film-poster img').attr('data-src') ?? '';
-          return MChapter(
-              name: title,
-              url: url,
-              imageUrl: cover);
-        })
+        .map((e) => MChapter(
+              name: e.select('.film-name a').attr('title') ?? '',
+              url: e.select('.film-name a').attr('href') ?? '',
+              imageUrl: e.select('.film-poster img').attr('data-src') ?? '',
+            ))
         .toList();
     return MPages(items, true);
   }
 
   @override
   Future<MPages> getLatestUpdates(MSource source, int page) async {
-    final res = await request("$baseUrl/filter?sort=lastest&page=$page");
-    final items = parse(res.body)
+    final res = await _makeRequest("$baseUrl/filter?sort=lastest&page=$page");
+    final body = res is String ? res : res.body;
+    final items = parse(body)
         .select('.film-list .film-item')
-        .map((e) {
-          final title = e.select('.film-name a').attr('title') ?? '';
-          final url = e.select('.film-name a').attr('href') ?? '';
-          final cover = e.select('.film-poster img').attr('data-src') ?? '';
-          return MChapter(
-              name: title,
-              url: url,
-              imageUrl: cover);
-        })
+        .map((e) => MChapter(
+              name: e.select('.film-name a').attr('title') ?? '',
+              url: e.select('.film-name a').attr('href') ?? '',
+              imageUrl: e.select('.film-poster img').attr('data-src') ?? '',
+            ))
         .toList();
     return MPages(items, true);
   }
@@ -61,26 +67,24 @@ class NineAnimeTV extends MProvider {
       url += statusFilter.state == 1 ? "&status=ongoing" : "&status=completed";
     }
 
-    final res = await request(url);
-    final items = parse(res.body)
+    final res = await _makeRequest(url);
+    final body = res is String ? res : res.body;
+    final items = parse(body)
         .select('.film-list .film-item')
-        .map((e) {
-          final title = e.select('.film-name a').attr('title') ?? '';
-          final url = e.select('.film-name a').attr('href') ?? '';
-          final cover = e.select('.film-poster img').attr('data-src') ?? '';
-          return MChapter(
-              name: title,
-              url: url,
-              imageUrl: cover);
-        })
+        .map((e) => MChapter(
+              name: e.select('.film-name a').attr('title') ?? '',
+              url: e.select('.film-name a').attr('href') ?? '',
+              imageUrl: e.select('.film-poster img').attr('data-src') ?? '',
+            ))
         .toList();
     return MPages(items, true);
   }
 
   @override
   Future<MManga> getDetail(MChapter chapter) async {
-    final res = await request(chapter.url);
-    final doc = parse(res.body);
+    final res = await _makeRequest(chapter.url);
+    final body = res is String ? res : res.body;
+    final doc = parse(body);
 
     final description = doc.select('#description-mobile').text.trim();
     final statusStr = doc.select('.film-status').text.trim();
@@ -116,22 +120,20 @@ class NineAnimeTV extends MProvider {
 
   @override
   Future<List<String>> getPageList(MChapter chapter) async {
-    final res = await request(chapter.url);
-    final script = parse(res.body).select('script:contains(ts_net)').first.text;
+    final res = await _makeRequest(chapter.url);
+    final body = res is String ? res : res.body;
+    final script = parse(body).select('script:contains(ts_net)').first.text;
     
     final tsNet = script.split("var ts_net = ")[1].split(";")[0];
-    final list = tsNet.replaceAll("'", "").split(',').reversed.toList();
-    final serverUrl = list[0].replaceAll(RegExp(r'[^A-Za-z0-9\-_\.\/:]'), '');
+    final serverUrl = tsNet.replaceAll("'", "").split(',').reversed.first;
+    final cleanUrl = serverUrl.replaceAll(RegExp(r'[^A-Za-z0-9\-_\.\/:]'), '');
 
-    final tokenMatch = RegExp(r'var en_token\s*=\s*"([^"]+)"').firstMatch(script);
-    final token = tokenMatch?.group(1) ?? '';
+    final token = RegExp(r'var en_token\s*=\s*"([^"]+)"').firstMatch(script)?.group(1) ?? '';
+    final videoRes = await _makeRequest('$cleanUrl/getvid?evid=$token', 
+        headers: {'Referer': chapter.url});
+    final videoBody = videoRes is String ? videoRes : videoRes.body;
 
-    final videoUrl = '$serverUrl/getvid?evid=$token';
-    final videoRes = await request(videoUrl, headers: {'Referer': chapter.url});
-    final videoJson = jsonDecode(videoRes.body);
-    final videoSrc = videoJson['data']['src'];
-
-    return [videoSrc];
+    return [jsonDecode(videoBody)['data']['src']];
   }
 
   @override
