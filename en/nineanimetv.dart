@@ -10,11 +10,10 @@ class NineAnimeTV extends MProvider {
   final bool isNsfw = false;
   final String baseUrl = "https://9animetv.to";
 
-  // Anymex uses `dio` instead of `http` or `MProvider.http`
   @override
   Future<MPages> getPopular(MSource source, int page) async {
-    final res = await dio.get("$baseUrl/filter?sort=views&page=$page"); // ✅ Use `dio.get`
-    final items = parse(res.data) // ✅ Use `res.data` instead of `res.body`
+    final res = await request("$baseUrl/filter?sort=views&page=$page");
+    final items = parse(res.body)
         .select('.film-list .film-item')
         .map((e) {
           final title = e.select('.film-name a').attr('title') ?? '';
@@ -31,8 +30,8 @@ class NineAnimeTV extends MProvider {
 
   @override
   Future<MPages> getLatestUpdates(MSource source, int page) async {
-    final res = await dio.get("$baseUrl/filter?sort=lastest&page=$page"); // ✅ `dio.get`
-    final items = parse(res.data) // ✅ `res.data`
+    final res = await request("$baseUrl/filter?sort=lastest&page=$page");
+    final items = parse(res.body)
         .select('.film-list .film-item')
         .map((e) {
           final title = e.select('.film-name a').attr('title') ?? '';
@@ -62,8 +61,8 @@ class NineAnimeTV extends MProvider {
       url += statusFilter.state == 1 ? "&status=ongoing" : "&status=completed";
     }
 
-    final res = await dio.get(url); // ✅ `dio.get`
-    final items = parse(res.data) // ✅ `res.data`
+    final res = await request(url);
+    final items = parse(res.body)
         .select('.film-list .film-item')
         .map((e) {
           final title = e.select('.film-name a').attr('title') ?? '';
@@ -80,8 +79,8 @@ class NineAnimeTV extends MProvider {
 
   @override
   Future<MManga> getDetail(MChapter chapter) async {
-    final res = await dio.get(chapter.url); // ✅ `dio.get`
-    final doc = parse(res.data); // ✅ `res.data`
+    final res = await request(chapter.url);
+    final doc = parse(res.body);
 
     final description = doc.select('#description-mobile').text.trim();
     final statusStr = doc.select('.film-status').text.trim();
@@ -117,22 +116,19 @@ class NineAnimeTV extends MProvider {
 
   @override
   Future<List<String>> getPageList(MChapter chapter) async {
-    final res = await dio.get(chapter.url); // ✅ `dio.get`
-    final script = parse(res.data).select('script:contains(ts_net)').first.text; // ✅ `res.data`
+    final res = await request(chapter.url);
+    final script = parse(res.body).select('script:contains(ts_net)').first.text;
     
-    // Extract ts_net array
     final tsNet = script.split("var ts_net = ")[1].split(";")[0];
     final list = tsNet.replaceAll("'", "").split(',').reversed.toList();
     final serverUrl = list[0].replaceAll(RegExp(r'[^A-Za-z0-9\-_\.\/:]'), '');
 
-    // Extract encrypted token
     final tokenMatch = RegExp(r'var en_token\s*=\s*"([^"]+)"').firstMatch(script);
     final token = tokenMatch?.group(1) ?? '';
 
-    // Build final URL
     final videoUrl = '$serverUrl/getvid?evid=$token';
-    final videoRes = await dio.get(videoUrl, options: Options(headers: {'Referer': chapter.url})); // ✅ `dio.get` with headers
-    final videoJson = jsonDecode(videoRes.data); // ✅ `videoRes.data`
+    final videoRes = await request(videoUrl, headers: {'Referer': chapter.url});
+    final videoJson = jsonDecode(videoRes.body);
     final videoSrc = videoJson['data']['src'];
 
     return [videoSrc];
