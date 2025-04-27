@@ -1,12 +1,13 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:mangayomi/bridge_lib.dart';
-import 'dart:convert';
+
+// Define fetchText function outside any class
 Future<String> fetchText(String url, {Map<String, String>? headers}) async {
   final client = HttpClient();
   final request = await client.getUrl(Uri.parse(url));
 
-  // Manually adding headers using a for loop
+  // Manually add headers using a for loop
   if (headers != null) {
     for (var entry in headers.entries) {
       request.headers.add(entry.key, entry.value);
