@@ -7,10 +7,10 @@ Future<String> fetchText(String url, {Map<String, String>? headers}) async {
   final client = HttpClient();
   final request = await client.getUrl(Uri.parse(url));
 
-  // Manually add headers using a for loop
+  // Manually set headers using set
   if (headers != null) {
     for (var entry in headers.entries) {
-      request.headers.add(entry.key, entry.value);
+      request.headers.set(entry.key, entry.value);
     }
   }
 
@@ -22,6 +22,7 @@ Future<String> fetchText(String url, {Map<String, String>? headers}) async {
     throw Exception('Failed to load data');
   }
 }
+
 
 
 class NineAnimeTv extends MProvider {
