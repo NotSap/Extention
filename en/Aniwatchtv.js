@@ -1,4 +1,4 @@
-globalThis.extension = {
+globalThis.source = {
   name: "Aniwatchtv",
   lang: "en",
   domains: ["aniwatchtv.to"],
@@ -9,9 +9,10 @@ globalThis.extension = {
     const res = await fetch(searchUrl);
     const text = await res.text();
 
-    const animeList = [];
     const parser = new DOMParser();
     const doc = parser.parseFromString(text, "text/html");
+
+    const animeList = [];
     const items = doc.querySelectorAll(".film_list-wrap .flw-item");
 
     items.forEach(item => {
