@@ -3,18 +3,19 @@ import 'package:mangayomi/bridge_lib.dart';
 
 class NineAnimeTv extends MProvider {
   NineAnimeTv() {
-    this.name = "9animeTV";
-    this.lang = "en";
-    this.type = "anime";
-    this.homepage = "https://9animetv.to";
-    this.supportsLatest = true;
+    name = "9animeTV";
+    lang = "en";
+    type = "anime";
+    homepage = "https://9animetv.to";
+    supportsLatest = true;
   }
 
   @override
   Future<List<MManga>> getPopular(int page) async {
-    final res = await fetch(
-        "$homepage/filter?type=series&sort=views&page=$page",
-        headers: {"referer": homepage});
+    final res = await fetchText(
+      "$homepage/filter?type=series&sort=views&page=$page",
+      headers: {"referer": homepage},
+    );
     final document = parseHtml(res);
     final list = document.select("div.flw-item").map((e) {
       final url = e.selectFirst("a.film-poster")?.getAttribute("href") ?? "";
@@ -31,9 +32,10 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<List<MManga>> search(String query, int page) async {
-    final res = await fetch(
-        "$homepage/filter?keyword=${Uri.encodeComponent(query)}&page=$page",
-        headers: {"referer": homepage});
+    final res = await fetchText(
+      "$homepage/filter?keyword=${Uri.encodeComponent(query)}&page=$page",
+      headers: {"referer": homepage},
+    );
     final document = parseHtml(res);
     final list = document.select("div.flw-item").map((e) {
       final url = e.selectFirst("a.film-poster")?.getAttribute("href") ?? "";
@@ -50,7 +52,10 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<List<MChapter>> getChapterList(String url) async {
-    final res = await fetch("$homepage$url", headers: {"referer": homepage});
+    final res = await fetchText(
+      "$homepage$url",
+      headers: {"referer": homepage},
+    );
     final document = parseHtml(res);
     final list = document.select("div.episodes-list > div.eps-item").reversed.map((e) {
       final epUrl = e.selectFirst("a")?.getAttribute("href") ?? "";
@@ -65,7 +70,10 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<List<MVideo>> getVideoList(String url) async {
-    final res = await fetch("$homepage$url", headers: {"referer": homepage});
+    final res = await fetchText(
+      "$homepage$url",
+      headers: {"referer": homepage},
+    );
     final document = parseHtml(res);
     final serverElements = document.select("div.anime_muti_link > ul > li");
     List<MVideo> videos = [];
@@ -81,7 +89,10 @@ class NineAnimeTv extends MProvider {
   }
 
   Future<List<MVideo>> _rapidCloudExtractor(String url) async {
-    final sourcesPage = await fetch(url, headers: {"referer": homepage});
+    final sourcesPage = await fetchText(
+      url,
+      headers: {"referer": homepage},
+    );
     final document = parseHtml(sourcesPage);
 
     final scriptTag = document.selectFirst('script:contains("sources")')?.text ?? "";
@@ -106,7 +117,10 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<List<MManga>> getLatestUpdates(int page) async {
-    final res = await fetch("$homepage/?page=$page", headers: {"referer": homepage});
+    final res = await fetchText(
+      "$homepage/?page=$page",
+      headers: {"referer": homepage},
+    );
     final document = parseHtml(res);
     final list = document.select("div.flw-item").map((e) {
       final url = e.selectFirst("a.film-poster")?.getAttribute("href") ?? "";
