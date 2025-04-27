@@ -1,3 +1,4 @@
+const bool debugMode = true;
 import 'package:mangayomi/bridge_lib.dart';
 import 'dart:convert';
 import 'package:html/parser.dart' show parse;
@@ -179,27 +180,24 @@ Future<List<Video>> getVideoList(String url) async {
     final doc = parse(response.body);
     final videos = <Video>[];
 
-    // Method 1: Extract from JSON in script tags
-    final scripts = doc.querySelectorAll('script');
-    for (final script in scripts) {
-      final content = script.text;
-      if (content.contains('sources') && content.contains('file')) {
-        final match = RegExp(r'sources:\s*(\[[^\]]+\])').firstMatch(content);
-        if (match != null) {
-          final sources = json.decode(match.group(1) as List;
-          for (final source in sources) {
-            final url = source['file']?.toString();
-            final quality = source['label']?.toString() ?? 'Unknown';
-            if (url != null && url.isNotEmpty) {
-              videos.add(Video(url, '${quality}p', url));
-            }
+    // 1. First try: Parse from script JSON
+    final scriptContent = doc.querySelector('script:contains("sources")')?.text;
+    if (scriptContent != null) {
+      final match = RegExp(r'sources:\s*(\[[^\]]+\])').firstMatch(scriptContent);
+      if (match != null) {
+        final sources = json.decode(match.group(1) as List;
+        for (final source in sources) {
+          final url = source['file']?.toString();
+          final quality = source['label']?.toString() ?? 'Unknown';
+          if (url != null && url.isNotEmpty) {
+            videos.add(Video(url, '$quality', url));
           }
-          return videos; // Return if found
         }
+        return videos;
       }
     }
 
-    // Method 2: Check for iframes
+    // 2. Second try: Check for iframes
     final iframe = doc.querySelector('iframe');
     if (iframe != null) {
       final src = iframe.attributes['src'];
@@ -213,7 +211,7 @@ Future<List<Video>> getVideoList(String url) async {
       }
     }
 
-    // Method 3: Check for NineAnime's special players
+    // 3. Third try: NineAnime-specific data attributes
     final playerData = doc.querySelector('[data-player]')?.attributes['data-player'];
     if (playerData != null) {
       try {
@@ -228,14 +226,19 @@ Future<List<Video>> getVideoList(String url) async {
       }
     }
 
-    // Fallback: Print HTML for debugging
-    print('Could not find videos in: ${doc.outerHtml.substring(0, 500)}...');
+    // Debug output if nothing found
+    print('Video extraction failed. Page content:');
+    print(response.body.substring(0, 1000)); // First 1000 chars for debugging
     return videos;
     
   } catch (e) {
     print('Error in getVideoList: $e');
     return [];
   }
+if (debugMode) {
+  print('Processing URL: $url');
+  print('Found ${videos.length} sources');
+}
 }
 
   @override
