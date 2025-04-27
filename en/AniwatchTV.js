@@ -1,65 +1,88 @@
-/** @type {import('../../../typings').ExtensionFactory} */
-const BestDubbedAnime = () => ({
-  id: "BestDubbedAnime",
-  name: "BestDubbedAnime",
-  icon: "https://www.google.com/s2/favicons?sz=256&domain=bestdubbedanime.com",
-  site: "https://bestdubbedanime.com",
-  version: "1.0.0",
-  langs: ["en"],
-  isAdult: false,
+const baseUrl = "https://aniwatchtv.to";
 
-  search: async (query, page, { fetch }) => {
-    const searchUrl = `https://bestdubbedanime.com/search?query=${encodeURIComponent(query)}`;
-    const res = await fetch(searchUrl);
-    const html = await res.text();
+async function fetchSearch(query) {
+  const searchUrl = `${baseUrl}/search?keyword=${encodeURIComponent(query)}`;
+  const res = await fetch(searchUrl);
+  const text = await res.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, "text/html");
 
-    const results = [];
-    const regex = /<a href="(\/anime\/[^"]+)"[^>]*>([^<]+)<\/a>/g;
-    let match;
+  const results = [];
+  doc.querySelectorAll(".flw-item").forEach((el) => {
+    const title = el.querySelector(".film-name a")?.textContent?.trim() || "";
+    const id = el.querySelector(".film-name a")?.getAttribute("href")?.replace("/watch/", "").replace("/", "") || "";
+    const image = el.querySelector("img")?.getAttribute("data-src") || "";
 
-    while ((match = regex.exec(html)) !== null) {
+    if (title && id) {
       results.push({
-        title: match[2],
-        url: `https://bestdubbedanime.com${match[1]}`,
-        thumbnail: "", // You can add thumbnail extraction if needed
+        id: id,
+        title: title,
+        image: image
       });
     }
+  });
 
-    return { results };
-  },
+  return results;
+}
 
-  fetchAnimeInfo: async (url, { fetch }) => {
-    const res = await fetch(url);
-    const html = await res.text();
+async function fetchAnimeInfo(id) {
+  const url = `${baseUrl}/watch/${id}`;
+  const res = await fetch(url);
+  const text = await res.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, "text/html");
 
-    // Basic fake info, improve later
-    return {
-      title: "Unknown Title",
-      description: "No description available.",
-      image: "",
-      genres: [],
-      status: "Unknown",
-      episodes: [],
-    };
-  },
+  const title = doc.querySelector(".film-name")?.textContent?.trim() || "";
+  const description = doc.querySelector(".synopsis .text")?.textContent?.trim() || "";
+  const image = doc.querySelector(".film-poster img")?.getAttribute("src") || "";
 
-  fetchEpisodes: async (url, { fetch }) => {
-    return [];
-  },
+  return {
+    id: id,
+    title: title,
+    description: description,
+    genres: [],
+    image: image,
+    episodes: []
+  };
+}
 
-  loadEpisodeSources: async (url, { fetch }) => {
-    return [];
-  },
+async function fetchEpisodes(id) {
+  const url = `${baseUrl}/ajax/v2/episode/list/${id}`;
+  const res = await fetch(url);
+  const json = await res.json();
+  const doc = new DOMParser().parseFromString(json.html, "text/html");
 
-  getSettings: () => [
+  const episodes = [];
+  doc.querySelectorAll("a.ep-item").forEach((el) => {
+    const episodeId = el.getAttribute("href")?.replace("/watch/", "").replace("/", "") || "";
+    const number = parseFloat(el.getAttribute("data-number")) || 0;
+    episodes.push({
+      id: episodeId,
+      number: number,
+      title: `Episode ${number}`,
+      image: ""
+    });
+  });
+
+  return episodes;
+}
+
+async function loadEpisodeSources(episodeId) {
+  const url = `${baseUrl}/watch/${episodeId}`;
+  const res = await fetch(url);
+  const text = await res.text();
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(text, "text/html");
+
+  const iframe = doc.querySelector("iframe")?.getAttribute("src");
+  if (!iframe) return [];
+
+  const embedUrl = iframe.startsWith("http") ? iframe : "https:" + iframe;
+  return [
     {
-      key: "preferredQuality",
-      type: "picker",
-      name: "Preferred Quality",
-      options: ["1080p", "720p", "480p"],
-      defaultValue: "1080p",
-    },
-  ],
-});
-
-export default BestDubbedAnime;
+      url: embedUrl,
+      quality: "Unknown",
+      isM3U8: false
+    }
+  ];
+}
