@@ -1,5 +1,5 @@
-import 'package:mangayomi/main.dart';
-import 'package:mangayomi/models/source.dart';
+import 'package:anymex/main.dart';
+import 'package:anymex/models/source.dart';
 import 'package:html/parser.dart' show parse;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
