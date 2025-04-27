@@ -6,6 +6,7 @@ Future<String> fetchText(String url, {Map<String, String>? headers}) async {
   final client = HttpClient();
   final request = await client.getUrl(Uri.parse(url));
 
+  // Use a for loop to add headers
   if (headers != null) {
     headers.forEach((key, value) {
       request.headers.add(key, value);
@@ -20,6 +21,7 @@ Future<String> fetchText(String url, {Map<String, String>? headers}) async {
     throw Exception('Failed to load data');
   }
 }
+
 
 class NineAnimeTv extends MProvider {
   NineAnimeTv({required this.source});
