@@ -1,6 +1,6 @@
-/** @type {import('../../../typings').ExtensionFactory} */
-const BestDubbedAnime = () => ({
-  id: "BestDubbedAnime",
+/** @type {Extension} */
+const extension = {
+  id: 92749201,
   name: "BestDubbedAnime",
   icon: "https://www.google.com/s2/favicons?sz=256&domain=bestdubbedanime.com",
   site: "https://bestdubbedanime.com",
@@ -21,7 +21,7 @@ const BestDubbedAnime = () => ({
       results.push({
         title: match[2],
         url: `https://bestdubbedanime.com${match[1]}`,
-        thumbnail: "", // You can add thumbnail extraction if needed
+        thumbnail: "",
       });
     }
 
@@ -32,7 +32,6 @@ const BestDubbedAnime = () => ({
     const res = await fetch(url);
     const html = await res.text();
 
-    // Basic fake info, improve later
     return {
       title: "Unknown Title",
       description: "No description available.",
@@ -60,6 +59,4 @@ const BestDubbedAnime = () => ({
       defaultValue: "1080p",
     },
   ],
-});
-
-export default BestDubbedAnime;
+};
