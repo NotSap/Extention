@@ -1,95 +1,105 @@
-globalThis.source = {
-  name: "Aniwatchtv",
-  lang: "en",
-  domains: ["aniwatchtv.to"],
-  isAdult: false,
+import {
+  Extension,
+  Source,
+  SourceInfo,
+  SourceInt,
+  Chapter,
+  ChapterDetails,
+  HomeSection,
+  HomeSectionType,
+  MangaTile,
+  PagedResults,
+  Request,
+  SearchRequest,
+  SourceManga,
+  Tag,
+} from "paperback-extensions-common";
 
-  search: async (query, page, filters) => {
-    const searchUrl = `https://aniwatchtv.to/search?keyword=${encodeURIComponent(query)}`;
-    const res = await fetch(searchUrl);
-    const text = await res.text();
+const AniwatchTV_DOMAIN = "https://aniwatchtv.to";
 
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(text, "text/html");
+class AniwatchTV extends Source {
+  constructor() {
+    super();
+    this.baseUrl = AniwatchTV_DOMAIN;
+  }
 
-    const animeList = [];
-    const items = doc.querySelectorAll(".film_list-wrap .flw-item");
+  get version() {
+    return "1.0.0";
+  }
 
-    items.forEach(item => {
-      const title = item.querySelector(".film-name a")?.textContent.trim() || "";
-      const url = item.querySelector(".film-name a")?.getAttribute("href") || "";
-      const poster = item.querySelector("img")?.getAttribute("data-src") || "";
+  get name() {
+    return "AniwatchTV";
+  }
 
-      animeList.push({
-        title: title,
-        url: "https://aniwatchtv.to" + url,
-        thumbnail: poster,
-      });
-    });
+  get iconUrl() {
+    return "https://www.google.com/s2/favicons?sz=256&domain=aniwatchtv.to";
+  }
 
-    return animeList;
-  },
-
-  fetchAnimeInfo: async (url) => {
-    const res = await fetch(url);
-    const text = await res.text();
-
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(text, "text/html");
-
-    const title = doc.querySelector(".film-name")?.textContent.trim() || "";
-    const description = doc.querySelector(".description")?.textContent.trim() || "";
-    const genres = Array.from(doc.querySelectorAll(".item.item-list a")).map(el => el.textContent.trim());
-    const poster = doc.querySelector(".film-poster img")?.getAttribute("src") || "";
-
-    return {
-      title: title,
-      description: description,
-      genres: genres,
-      thumbnail: poster,
-    };
-  },
-
-  fetchEpisodes: async (url) => {
-    const res = await fetch(url);
-    const text = await res.text();
-
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(text, "text/html");
+  async getAnimeInfo(animeId) {
+    const response = await fetch(`${this.baseUrl}/watch/${animeId}`);
+    const html = await response.text();
 
     const episodes = [];
-    const episodeItems = doc.querySelectorAll(".episodes li");
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
 
-    episodeItems.forEach((item, index) => {
-      const episodeUrl = item.querySelector("a")?.getAttribute("href") || "";
-      const episodeNumber = item.querySelector("a")?.textContent.trim() || `Episode ${index + 1}`;
-
+    const episodesElements = doc.querySelectorAll(".episodes li a");
+    episodesElements.forEach((ep) => {
+      const id = ep.getAttribute("href").split("/").pop();
+      const title = ep.textContent.trim();
       episodes.push({
-        name: episodeNumber,
-        url: "https://aniwatchtv.to" + episodeUrl,
-        number: index + 1,
+        id: id,
+        number: parseFloat(title) || 0,
+        title: title,
       });
     });
 
-    return episodes.reverse();
-  },
+    return {
+      id: animeId,
+      title: doc.querySelector(".film-name")?.textContent.trim() || animeId,
+      episodes: episodes.reverse(),
+    };
+  }
 
-  loadEpisodeSources: async (url) => {
-    const res = await fetch(url);
-    const text = await res.text();
+  async getEpisodes(animeId) {
+    return this.getAnimeInfo(animeId);
+  }
 
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(text, "text/html");
-
-    const iframe = doc.querySelector("iframe");
-    if (!iframe) return [];
-
-    const embedUrl = iframe.getAttribute("src");
+  async getEpisodeSources(episodeId) {
     return [
       {
-        url: embedUrl.startsWith("http") ? embedUrl : "https:" + embedUrl,
+        url: `${this.baseUrl}/streaming.php?id=${episodeId}`,
         quality: "default",
+        isM3U8: false,
       },
     ];
-  },
-};
+  }
+
+  async search(request) {
+    const query = request.query;
+    if (!query) return { results: [] };
+
+    const response = await fetch(`${this.baseUrl}/search?keyword=${encodeURIComponent(query)}`);
+    const html = await response.text();
+
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+
+    const results = [];
+    const elements = doc.querySelectorAll(".film_list-wrap .flw-item");
+    elements.forEach((el) => {
+      const link = el.querySelector("a");
+      const id = link.getAttribute("href").split("/").pop();
+      const title = el.querySelector(".dynamic-name")?.textContent.trim() || "Unknown Title";
+
+      results.push({
+        id: id,
+        title: title,
+      });
+    });
+
+    return { results };
+  }
+}
+
+globalThis.extension = new AniwatchTV();
