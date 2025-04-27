@@ -1,5 +1,4 @@
-/** @type {Extension} */
-const extension = {
+export default {
   id: 92749201,
   name: "BestDubbedAnime",
   icon: "https://www.google.com/s2/favicons?sz=256&domain=bestdubbedanime.com",
@@ -25,12 +24,12 @@ const extension = {
         results.push({
           title: title,
           url: `https://bestdubbedanime.com${href}`,
-          thumbnail: "", // Optional: you can parse thumbnail too
+          thumbnail: "", // optional
         });
       }
     });
 
-    return { results: results };
+    return { results };
   },
 
   fetchAnimeInfo: async (url, { fetch }) => {
@@ -65,5 +64,3 @@ const extension = {
     },
   ],
 };
-
-globalThis.extension = extension;
