@@ -60,3 +60,6 @@ const extension = {
     },
   ],
 };
+
+// ===> This line is REQUIRED!
+globalThis.extension = extension;
