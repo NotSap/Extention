@@ -10,12 +10,9 @@ class NineAnimeTV extends MProvider {
   final bool isNsfw = false;
   final String baseUrl = "https://9animetv.to";
 
-  // Create HTTP client instance
-  final client = HttpClient();
-
   @override
   Future<MPages> getPopular(MSource source, int page) async {
-    final res = await client.get(Uri.parse("$baseUrl/filter?sort=views&page=$page"));
+    final res = await request("$baseUrl/filter?sort=views&page=$page"); // Changed to request()
     final items = parse(res.body)
         .select('.film-list .film-item')
         .map((e) {
@@ -31,12 +28,15 @@ class NineAnimeTV extends MProvider {
     return MPages(items, true);
   }
 
-  // [Keep all other methods the same but replace MProvider.http with client.get]
-  // [Update all HTTP calls similarly]
+  // Update ALL other HTTP calls similarly:
+  // Replace:
+  // await MProvider.http.get(url) 
+  // With:
+  // await request(url)
 
   @override
   Future<List<String>> getPageList(MChapter chapter) async {
-    final res = await client.get(Uri.parse(chapter.url));
+    final res = await request(chapter.url); // Changed to request()
     final script = parse(res.body).select('script:contains(ts_net)').first.text;
     
     final tsNet = script.split("var ts_net = ")[1].split(";")[0];
@@ -47,16 +47,12 @@ class NineAnimeTV extends MProvider {
     final token = tokenMatch?.group(1) ?? '';
 
     final videoUrl = '$serverUrl/getvid?evid=$token';
-    final videoRes = await client.get(Uri.parse(videoUrl), headers: {'Referer': chapter.url});
+    final videoRes = await request(videoUrl, headers: {'Referer': chapter.url}); // Changed to request()
     final videoJson = jsonDecode(videoRes.body);
     final videoSrc = videoJson['data']['src'];
 
     return [videoSrc];
   }
 
-  @override
-  void dispose() {
-    client.close();
-    super.dispose();
-  }
+  // [Keep all other methods unchanged except for HTTP calls]
 }
