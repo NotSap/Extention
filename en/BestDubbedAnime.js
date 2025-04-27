@@ -14,18 +14,23 @@ const extension = {
     const html = await res.text();
 
     const results = [];
-    const regex = /<a href="(\/anime\/[^"]+)"[^>]*>([^<]+)<\/a>/g;
-    let match;
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
 
-    while ((match = regex.exec(html)) !== null) {
-      results.push({
-        title: match[2],
-        url: `https://bestdubbedanime.com${match[1]}`,
-        thumbnail: "",
-      });
-    }
+    const elements = doc.querySelectorAll(".film-detail a[href^='/anime/']");
+    elements.forEach((el) => {
+      const title = el.textContent.trim();
+      const href = el.getAttribute("href");
+      if (href && title) {
+        results.push({
+          title: title,
+          url: `https://bestdubbedanime.com${href}`,
+          thumbnail: "", // Optional: you can parse thumbnail too
+        });
+      }
+    });
 
-    return { results };
+    return { results: results };
   },
 
   fetchAnimeInfo: async (url, { fetch }) => {
@@ -61,5 +66,4 @@ const extension = {
   ],
 };
 
-// ===> This line is REQUIRED!
 globalThis.extension = extension;
