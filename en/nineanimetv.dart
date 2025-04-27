@@ -1,156 +1,122 @@
-import 'package:mangayomi/bridge_lib.dart';
 import 'dart:convert';
+import 'package:mangayomi/bridge_lib.dart';
 
-class NineAnimeTV extends MProvider {
-  NineAnimeTV();
+class NineAnimeTv extends MProvider {
+  NineAnimeTv() {
+    this.name = "9animeTV";
+    this.lang = "en";
+    this.type = "anime";
+    this.homepage = "https://9animetv.to";
+    this.supportsLatest = true;
+  }
+
   @override
-  final String id = "nineanimetv";
-  final String name = "9AnimeTV";
-  final String lang = "en";
-  final bool isNsfw = false;
-  final String baseUrl = "https://9animetv.to";
+  Future<List<MManga>> getPopular(int page) async {
+    final res = await request(
+        "$homepage/filter?type=series&sort=views&page=$page", headers: {"referer": homepage});
+    final document = parseHtml(res);
+    final list = document.select("div.flw-item").map((e) {
+      final url = e.selectFirst("a.film-poster")?.getAttribute("href") ?? "";
+      final title = e.selectFirst("div.film-detail > h3")?.text ?? "";
+      final thumbnail = e.selectFirst("img")?.getAttribute("data-src") ?? "";
+      return MManga(
+        title: title,
+        url: url,
+        thumbnailUrl: thumbnail,
+      );
+    }).toList();
+    return list;
+  }
 
-  // Universal request method that works with Anymex
-  Future<dynamic> _makeRequest(String url, {Map<String, String>? headers}) async {
-    try {
-      // Try Anymex's native request method first
-      return await MProvider.invokeMethod('request', {'url': url, 'headers': headers ?? {}});
-    } catch (e) {
-      // Fallback to standard method if native fails
-      final res = await request(url, headers: headers);
-      return res;
+  @override
+  Future<List<MManga>> search(String query, int page) async {
+    final res = await request(
+        "$homepage/filter?keyword=${Uri.encodeComponent(query)}&page=$page",
+        headers: {"referer": homepage});
+    final document = parseHtml(res);
+    final list = document.select("div.flw-item").map((e) {
+      final url = e.selectFirst("a.film-poster")?.getAttribute("href") ?? "";
+      final title = e.selectFirst("div.film-detail > h3")?.text ?? "";
+      final thumbnail = e.selectFirst("img")?.getAttribute("data-src") ?? "";
+      return MManga(
+        title: title,
+        url: url,
+        thumbnailUrl: thumbnail,
+      );
+    }).toList();
+    return list;
+  }
+
+  @override
+  Future<List<MChapter>> getChapterList(String url) async {
+    final res = await request("$homepage$url", headers: {"referer": homepage});
+    final document = parseHtml(res);
+    final list = document.select("div.episodes-list > div.eps-item").reversed.map((e) {
+      final epUrl = e.selectFirst("a")?.getAttribute("href") ?? "";
+      final epNum = e.selectFirst("a")?.text.trim() ?? "";
+      return MChapter(
+        name: "Episode $epNum",
+        url: epUrl,
+      );
+    }).toList();
+    return list;
+  }
+
+  @override
+  Future<List<MVideo>> getVideoList(String url) async {
+    final res = await request("$homepage$url", headers: {"referer": homepage});
+    final document = parseHtml(res);
+    final serverElements = document.select("div.anime_muti_link > ul > li");
+    List<MVideo> videos = [];
+
+    for (var server in serverElements) {
+      final serverUrl = server.selectFirst("a")?.getAttribute("data-video") ?? "";
+      if (serverUrl.contains("rapid-cloud")) {
+        videos.addAll(await _rapidCloudExtractor(serverUrl));
+      }
     }
+
+    return videos;
   }
 
-  @override
-  Future<MPages> getPopular(MSource source, int page) async {
-    final res = await _makeRequest("$baseUrl/filter?sort=views&page=$page");
-    final body = res is String ? res : res.body;
-    final items = parse(body)
-        .select('.film-list .film-item')
-        .map((e) => MChapter(
-              name: e.select('.film-name a').attr('title') ?? '',
-              url: e.select('.film-name a').attr('href') ?? '',
-              imageUrl: e.select('.film-poster img').attr('data-src') ?? '',
-            ))
-        .toList();
-    return MPages(items, true);
-  }
+  Future<List<MVideo>> _rapidCloudExtractor(String url) async {
+    final sourcesPage = await request(url, headers: {"referer": homepage});
+    final document = parseHtml(sourcesPage);
 
-  @override
-  Future<MPages> getLatestUpdates(MSource source, int page) async {
-    final res = await _makeRequest("$baseUrl/filter?sort=lastest&page=$page");
-    final body = res is String ? res : res.body;
-    final items = parse(body)
-        .select('.film-list .film-item')
-        .map((e) => MChapter(
-              name: e.select('.film-name a').attr('title') ?? '',
-              url: e.select('.film-name a').attr('href') ?? '',
-              imageUrl: e.select('.film-poster img').attr('data-src') ?? '',
-            ))
-        .toList();
-    return MPages(items, true);
-  }
+    final scriptTag = document.selectFirst('script:contains("sources")')?.text ?? "";
+    final sourcesJsonMatch = RegExp(r'sources\s*:\s*(\[{.*?}\])').firstMatch(scriptTag);
+    if (sourcesJsonMatch == null) return [];
 
-  @override
-  Future<MPages> search(MSource source, String query, int page, FilterList filterList) async {
-    final filters = filterList.filters;
-    String url = "$baseUrl/filter?keyword=$query&page=$page";
+    final sourcesJson = sourcesJsonMatch.group(1);
+    final sources = json.decode(sourcesJson!);
 
-    final genreFilter = filters.whereType<GenreFilter>().firstOrNull;
-    if (genreFilter != null && genreFilter.state != 0) {
-      url += "&genre=${genreFilter.state}";
+    List<MVideo> videos = [];
+    for (final source in sources) {
+      final file = source['file'];
+      final label = source['label'];
+      videos.add(MVideo(
+        url: file,
+        quality: label,
+      ));
     }
 
-    final statusFilter = filters.whereType<SelectFilter>().firstWhere((f) => f.name == "Status");
-    if (statusFilter.state != 0) {
-      url += statusFilter.state == 1 ? "&status=ongoing" : "&status=completed";
-    }
-
-    final res = await _makeRequest(url);
-    final body = res is String ? res : res.body;
-    final items = parse(body)
-        .select('.film-list .film-item')
-        .map((e) => MChapter(
-              name: e.select('.film-name a').attr('title') ?? '',
-              url: e.select('.film-name a').attr('href') ?? '',
-              imageUrl: e.select('.film-poster img').attr('data-src') ?? '',
-            ))
-        .toList();
-    return MPages(items, true);
+    return videos;
   }
 
   @override
-  Future<MManga> getDetail(MChapter chapter) async {
-    final res = await _makeRequest(chapter.url);
-    final body = res is String ? res : res.body;
-    final doc = parse(body);
-
-    final description = doc.select('#description-mobile').text.trim();
-    final statusStr = doc.select('.film-status').text.trim();
-    final status = statusStr.toLowerCase().contains('ongoing') ? MStatus.ongoing : MStatus.completed;
-
-    final genres = doc.select('.film-genre a')
-        .map((e) => e.text.trim())
-        .toList();
-
-    final chapters = doc.select('.ss-list .episode-item')
-        .map((e) {
-          final name = e.select('.episode-name').text.trim();
-          final url = e.select('a').attr('href') ?? '';
-          final date = e.select('.episode-date').text.trim();
-          return MChapter(
-              name: name,
-              url: url,
-              date: date);
-        })
-        .toList()
-        .reversed
-        .toList();
-
-    return MManga(
-      title: chapter.name,
-      description: description,
-      status: status,
-      genres: genres,
-      chapters: chapters,
-      cover: chapter.imageUrl,
-    );
-  }
-
-  @override
-  Future<List<String>> getPageList(MChapter chapter) async {
-    final res = await _makeRequest(chapter.url);
-    final body = res is String ? res : res.body;
-    final script = parse(body).select('script:contains(ts_net)').first.text;
-    
-    final tsNet = script.split("var ts_net = ")[1].split(";")[0];
-    final serverUrl = tsNet.replaceAll("'", "").split(',').reversed.first;
-    final cleanUrl = serverUrl.replaceAll(RegExp(r'[^A-Za-z0-9\-_\.\/:]'), '');
-
-    final token = RegExp(r'var en_token\s*=\s*"([^"]+)"').firstMatch(script)?.group(1) ?? '';
-    final videoRes = await _makeRequest('$cleanUrl/getvid?evid=$token', 
-        headers: {'Referer': chapter.url});
-    final videoBody = videoRes is String ? videoRes : videoRes.body;
-
-    return [jsonDecode(videoBody)['data']['src']];
-  }
-
-  @override
-  FilterList getFilterList() {
-    return FilterList([
-      SelectFilter("Status", "All", ["All", "Ongoing", "Completed"]),
-      GenreFilter("Genre", 0, [
-        "Action", "Adventure", "Cars", "Comedy", "Dementia", 
-        "Demons", "Drama", "Ecchi", "Fantasy", "Game", 
-        "Harem", "Historical", "Horror", "Josei", "Kids", 
-        "Magic", "Martial Arts", "Mecha", "Military", "Music", 
-        "Mystery", "Parody", "Police", "Psychological", "Romance", 
-        "Samurai", "School", "Sci-Fi", "Seinen", "Shoujo", 
-        "Shoujo Ai", "Shounen", "Shounen Ai", "Slice of Life", "Space", 
-        "Sports", "Super Power", "Supernatural", "Thriller", "Vampire", 
-        "Yaoi", "Yuri"
-      ])
-    ]);
+  Future<List<MManga>> getLatestUpdates(int page) async {
+    final res = await request("$homepage/?page=$page", headers: {"referer": homepage});
+    final document = parseHtml(res);
+    final list = document.select("div.flw-item").map((e) {
+      final url = e.selectFirst("a.film-poster")?.getAttribute("href") ?? "";
+      final title = e.selectFirst("div.film-detail > h3")?.text ?? "";
+      final thumbnail = e.selectFirst("img")?.getAttribute("data-src") ?? "";
+      return MManga(
+        title: title,
+        url: url,
+        thumbnailUrl: thumbnail,
+      );
+    }).toList();
+    return list;
   }
 }
