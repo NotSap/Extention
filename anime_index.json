@@ -57,26 +57,25 @@
   "additionalParams": "",
   "sourceCodeLanguage": 1
 },
-  {
-    "name": "AnimeDao (Dubbed)",
-    "id": 987654323,
-    "baseUrl": "https://animedao.com.ru/dubbed",
-    "lang": "en",
-    "typeSource": "single",
-    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://animedao.com.ru",
-    "dateFormat": "",
-    "dateFormatLocale": "",
-    "isNsfw": false,
-    "hasCloudflare": false,
-    "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/main/en/animedao-dubbed.js",
-    "apiUrl": "",
-    "version": "1.0.0",
-    "isManga": false,
-    "itemType": 1,
-    "isFullData": false,
-    "appMinVerReq": "0.5.0",
-    "additionalParams": "",
-    "sourceCodeLanguage": 1
-  }
-
+{
+  "name":"AllAnime",
+  "id":558217176,
+  "baseUrl":"https://allanime.to",
+  "lang":"en",
+  "typeSource":"single",
+  "iconUrl":"https://raw.githubusercontent.com/kodjodevf/mangayomi-extensions/main/javascript/icon/en.allanime.png",
+  "dateFormat":"",
+  "dateFormatLocale":"",
+  "isNsfw":false,
+  "hasCloudflare":false,
+  "sourceCodeUrl":"https://raw.githubusercontent.com/NotSap/Extention/main/en/AllAnime.js",
+  "apiUrl":"https://api.allanime.day/api",
+  "version":"0.0.35",
+  "isManga":false,
+  "itemType":1,
+  "isFullData":false,
+  "appMinVerReq":"0.5.0",
+  "additionalParams":"",
+  "sourceCodeLanguage":1
+}
 ]
