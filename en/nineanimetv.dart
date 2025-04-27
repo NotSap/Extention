@@ -1,5 +1,6 @@
 import 'package:mangayomi/bridge_lib.dart';
 import 'dart:convert';
+import 'package:http/http.dart' as http;  // Added HTTP package import
 
 class NineAnimeTV extends MProvider {
   NineAnimeTV();
@@ -10,9 +11,12 @@ class NineAnimeTV extends MProvider {
   final bool isNsfw = false;
   final String baseUrl = "https://www.nineanimetv.com";
 
+  // Initialize HTTP client
+  final http.Client client = http.Client();
+
   @override
   Future<MPages> getPopular(MSource source, int page) async {
-    final res = await http.get("$baseUrl/filter?sort=views&page=$page");
+    final res = await client.get(Uri.parse("$baseUrl/filter?sort=views&page=$page"));
     final items = parse(res.body)
         .select('.film-list .film-item')
         .map((e) {
@@ -30,7 +34,7 @@ class NineAnimeTV extends MProvider {
 
   @override
   Future<MPages> getLatestUpdates(MSource source, int page) async {
-    final res = await http.get("$baseUrl/filter?sort=lastest&page=$page");
+    final res = await client.get(Uri.parse("$baseUrl/filter?sort=lastest&page=$page"));
     final items = parse(res.body)
         .select('.film-list .film-item')
         .map((e) {
@@ -61,7 +65,7 @@ class NineAnimeTV extends MProvider {
       url += statusFilter.state == 1 ? "&status=ongoing" : "&status=completed";
     }
 
-    final res = await http.get(url);
+    final res = await client.get(Uri.parse(url));
     final items = parse(res.body)
         .select('.film-list .film-item')
         .map((e) {
@@ -79,7 +83,7 @@ class NineAnimeTV extends MProvider {
 
   @override
   Future<MManga> getDetail(MChapter chapter) async {
-    final res = await http.get(chapter.url);
+    final res = await client.get(Uri.parse(chapter.url));
     final doc = parse(res.body);
 
     final description = doc.select('#description-mobile').text.trim();
@@ -116,7 +120,7 @@ class NineAnimeTV extends MProvider {
 
   @override
   Future<List<String>> getPageList(MChapter chapter) async {
-    final res = await http.get(chapter.url);
+    final res = await client.get(Uri.parse(chapter.url));
     final script = parse(res.body).select('script:contains(ts_net)').first.text;
     
     // Extract ts_net array
@@ -130,7 +134,7 @@ class NineAnimeTV extends MProvider {
 
     // Build final URL
     final videoUrl = '$serverUrl/getvid?evid=$token';
-    final videoRes = await http.get(videoUrl, headers: {'Referer': chapter.url});
+    final videoRes = await client.get(Uri.parse(videoUrl), headers: {'Referer': chapter.url});
     final videoJson = jsonDecode(videoRes.body);
     final videoSrc = videoJson['data']['src'];
 
@@ -153,5 +157,11 @@ class NineAnimeTV extends MProvider {
         "Yaoi", "Yuri"
       ])
     ]);
+  }
+
+  @override
+  void dispose() {
+    client.close();  // Close HTTP client when done
+    super.dispose();
   }
 }
