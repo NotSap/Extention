@@ -1,24 +1,5 @@
-import 'dart:io';
-import 'dart:convert';
+final Client client = Client(source);
 import 'package:mangayomi/bridge_lib.dart';
-
-Future<String> fetchText(String url, {Map<String, String>? headers}) async {
-  final client = HttpClient();
-  final request = await client.getUrl(Uri.parse(url));
-
-  // Set headers using addAll method
-  if (headers != null) {
-    request.headers.addAll(headers);
-  }
-
-  final response = await request.close();
-
-  if (response.statusCode == 200) {
-    return await response.transform(utf8.decoder).join();
-  } else {
-    throw Exception('Failed to load data');
-  }
-}
 
 class NineAnimeTv extends MProvider {
   NineAnimeTv({required this.source});
@@ -192,8 +173,12 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<List<MVideo>> getVideoList(String url) async {
-    final res = await fetchText("$homepage$url", headers: {"referer": homepage});
-    final document = parseHtml(res);
+    // Use your existing client
+    final res = await client.get(
+      Uri.parse("$homepage$url"),
+      headers: {"referer": homepage},
+    );
+    final document = parseHtml(res.body);
     final serverElements = document.select("div.anime_muti_link > ul > li");
     List<MVideo> videos = [];
 
@@ -203,8 +188,7 @@ class NineAnimeTv extends MProvider {
         videos.addAll(await _rapidCloudExtractor(serverUrl));
       }
     }
-
-    return videos;
+      return videos;
   }
 
 
@@ -222,49 +206,24 @@ class NineAnimeTv extends MProvider {
     return MPages(animeList, true);
   }
 
-  Future<List<MVideo>> rapidCloudExtractor(String url, String name) async {
-    final serverUrl = ['https://megacloud.tv', 'https://rapid-cloud.co'];
+   Future<List<MVideo>> _rapidCloudExtractor(String url) async {
+    // Again, use client.get instead of fetchText
+    final res = await client.get(
+      Uri.parse(url),
+      headers: {"referer": homepage},
+    );
+    final document = parseHtml(res.body);
 
-    final serverType =
-        url.startsWith('https://megacloud.tv') ||
-                url.startsWith('https://megacloud.club')
-            ? 0
-            : 1;
-    final sourceUrl = [
-      '/embed-2/ajax/e-1/getSources?id=',
-      '/ajax/embed-6-v2/getSources?id=',
-    ];
-    final sourceSpliter = ['/e-1/', '/embed-6-v2/'];
-    final id = url.split(sourceSpliter[serverType]).last.split('?').first;
-    final resServer =
-        (await client.get(
-          Uri.parse('${serverUrl[serverType]}${sourceUrl[serverType]}$id'),
-          headers: {"X-Requested-With": "XMLHttpRequest"},
-        )).body;
-    final encrypted = getMapValue(resServer, "encrypted");
-    String videoResJson = "";
-    List<MVideo> videos = [];
-    if (encrypted == "true") {
-      final ciphered = getMapValue(resServer, "sources");
-      List<List<int>> indexPairs = await generateIndexPairs(serverType);
-      var password = '';
-      String ciphertext = ciphered;
-      int index = 0;
-      for (List<int> item in json.decode(json.encode(indexPairs))) {
-        int start = item.first + index;
-        int end = start + item.last;
-        String passSubstr = ciphered.substring(start, end);
-        password += passSubstr;
-        ciphertext = ciphertext.replaceFirst(passSubstr, "");
-        index += item.last;
-      }
-      videoResJson = decryptAESCryptoJS(ciphertext, password);
-    } else {
-      videoResJson = json.encode(
-        (json.decode(resServer)["sources"] as List<Map<String, dynamic>>),
-      );
-    }
+    final scriptTag = document.selectFirst('script:contains("sources")')?.text ?? "";
+    final match = RegExp(r'sources\s*:\s*(\[{.*?}\])').firstMatch(scriptTag);
+    if (match == null) return [];
 
+    final sources = json.decode(match.group(1)!);
+    return (sources as List).map((s) => MVideo(
+      url: s['file'],
+      quality: s['label'],
+    )).toList();
+  }
     String masterUrl =
         ((json.decode(videoResJson) as List<Map<String, dynamic>>)
             .first)['file'];
