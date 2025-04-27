@@ -1,14 +1,12 @@
 const BASE_URL = "https://bestdubbedanime.com";
 
 /**
- * Fetches the popular anime list.
+ * Scrape the “Series” paginated list.
  * @param {number} page
- * @returns {{ results: {title:string,url:string,thumbnail:string}[], hasNextPage:boolean }}
+ * @returns {{ results: { title:string, url:string, thumbnail:string }[], hasNextPage: boolean }}
  */
 async function fetchPopular(page) {
-  const url = page > 1
-    ? `${BASE_URL}/series?page=${page}`
-    : `${BASE_URL}/series`;
+  const url = `${BASE_URL}/series?page=${page}`;
   const res = await fetch(url);
   const html = await res.text();
   const doc = new DOMParser().parseFromString(html, "text/html");
@@ -20,7 +18,6 @@ async function fetchPopular(page) {
     const title = a?.getAttribute("title")?.trim() || a?.textContent?.trim() || "";
     const href = a?.getAttribute("href") || "";
     const thumbnail = img?.getAttribute("src") || "";
-
     return {
       title,
       url: href.startsWith("http") ? href : BASE_URL + href,
@@ -35,13 +32,12 @@ async function fetchPopular(page) {
 }
 
 /**
- * Searches through the popular list (site has no real search endpoint).
+ * “Search” by filtering page 1 of popular titles.
  * @param {string} query
  * @param {number} page
- * @returns {{ results: {title:string,url:string,thumbnail:string}[], hasNextPage:boolean }}
+ * @returns {{ results: { title:string, url:string, thumbnail:string }[], hasNextPage: boolean }}
  */
 async function search(query, page) {
-  // Always pull page 1 of popular, then filter titles
   const { results } = await fetchPopular(1);
   const q = query.trim().toLowerCase();
   const filtered = results.filter(item =>
@@ -54,9 +50,15 @@ async function search(query, page) {
 }
 
 /**
- * Fetches the anime’s detail page: title, description, thumbnail, and episode list.
+ * Scrape an anime’s detail page: title, description, thumbnail, genres, and episodes.
  * @param {string} url
- * @returns {{ title:string, description:string, thumbnail:string, genres:string[], episodes:{name:string,url:string}[] }}
+ * @returns {{
+ *   title: string,
+ *   description: string,
+ *   thumbnail: string,
+ *   genres: string[],
+ *   episodes: { name:string, url:string }[]
+ * }}
  */
 async function fetchAnimeInfo(url) {
   const res = await fetch(url);
@@ -70,27 +72,22 @@ async function fetchAnimeInfo(url) {
     ? (imgEl.src.startsWith("http") ? imgEl.src : BASE_URL + imgEl.getAttribute("src"))
     : "";
 
-  // Genres (if present)
   const genres = Array.from(doc.querySelectorAll(".anime__details__pager a"))
     .map(a => a.textContent.trim())
     .filter(g => g);
 
-  // Episodes
   const epEls = Array.from(doc.querySelectorAll(".episode-list a"));
   const episodes = epEls.map(el => ({
     name: el.textContent.trim(),
-    url: el.href.startsWith("http")
-      ? el.href
-      : BASE_URL + el.getAttribute("href")
+    url: el.href.startsWith("http") ? el.href : BASE_URL + el.getAttribute("href")
   }));
 
   return { title, description, thumbnail, genres, episodes };
 }
 
 /**
- * Returns the list of episodes for a given anime URL.
+ * Returns the same episodes array from fetchAnimeInfo.
  * @param {string} url
- * @returns {{ name:string, url:string }[]}
  */
 async function fetchEpisodes(url) {
   const info = await fetchAnimeInfo(url);
@@ -98,7 +95,7 @@ async function fetchEpisodes(url) {
 }
 
 /**
- * Loads the actual video source(s) from an episode page.
+ * Load video sources by reading the first <iframe> on the episode page.
  * @param {string} url
  * @returns {{ url:string, quality:string, isM3U8:boolean }[]}
  */
@@ -106,11 +103,8 @@ async function loadEpisodeSources(url) {
   const res = await fetch(url);
   const html = await res.text();
   const doc = new DOMParser().parseFromString(html, "text/html");
-
-  // Most episodes embed via an iframe
   const iframe = doc.querySelector("iframe");
   if (!iframe) return [];
-
   const src = iframe.src;
   return [{
     url: src,
@@ -120,7 +114,7 @@ async function loadEpisodeSources(url) {
 }
 
 /**
- * Returns an array of mangayomi settings, surfaced in the app’s settings UI.
+ * Expose user settings in the app.
  */
 function getSettings() {
   return [
@@ -140,7 +134,6 @@ function getSettings() {
   ];
 }
 
-// Expose everything for Mangayomi/Anymex to pick up
 module.exports = {
   fetchPopular,
   search,
