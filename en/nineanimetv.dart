@@ -12,11 +12,12 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<List<MManga>> getPopular(int page) async {
-    final res = await fetchText(
+    final client = Client();
+    final res = await client.get(
       "$homepage/filter?type=series&sort=views&page=$page",
       headers: {"referer": homepage},
     );
-    final document = parseHtml(res);
+    final document = parseHtml(res.body);
     final list = document.select("div.flw-item").map((e) {
       final url = e.selectFirst("a.film-poster")?.getAttribute("href") ?? "";
       final title = e.selectFirst("div.film-detail > h3")?.text ?? "";
@@ -32,11 +33,12 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<List<MManga>> search(String query, int page) async {
-    final res = await fetchText(
+    final client = Client();
+    final res = await client.get(
       "$homepage/filter?keyword=${Uri.encodeComponent(query)}&page=$page",
       headers: {"referer": homepage},
     );
-    final document = parseHtml(res);
+    final document = parseHtml(res.body);
     final list = document.select("div.flw-item").map((e) {
       final url = e.selectFirst("a.film-poster")?.getAttribute("href") ?? "";
       final title = e.selectFirst("div.film-detail > h3")?.text ?? "";
@@ -52,11 +54,12 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<List<MChapter>> getChapterList(String url) async {
-    final res = await fetchText(
+    final client = Client();
+    final res = await client.get(
       "$homepage$url",
       headers: {"referer": homepage},
     );
-    final document = parseHtml(res);
+    final document = parseHtml(res.body);
     final list = document.select("div.episodes-list > div.eps-item").reversed.map((e) {
       final epUrl = e.selectFirst("a")?.getAttribute("href") ?? "";
       final epNum = e.selectFirst("a")?.text.trim() ?? "";
@@ -70,11 +73,12 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<List<MVideo>> getVideoList(String url) async {
-    final res = await fetchText(
+    final client = Client();
+    final res = await client.get(
       "$homepage$url",
       headers: {"referer": homepage},
     );
-    final document = parseHtml(res);
+    final document = parseHtml(res.body);
     final serverElements = document.select("div.anime_muti_link > ul > li");
     List<MVideo> videos = [];
 
@@ -89,11 +93,12 @@ class NineAnimeTv extends MProvider {
   }
 
   Future<List<MVideo>> _rapidCloudExtractor(String url) async {
-    final sourcesPage = await fetchText(
+    final client = Client();
+    final res = await client.get(
       url,
       headers: {"referer": homepage},
     );
-    final document = parseHtml(sourcesPage);
+    final document = parseHtml(res.body);
 
     final scriptTag = document.selectFirst('script:contains("sources")')?.text ?? "";
     final sourcesJsonMatch = RegExp(r'sources\s*:\s*(\[{.*?}\])').firstMatch(scriptTag);
@@ -117,11 +122,12 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<List<MManga>> getLatestUpdates(int page) async {
-    final res = await fetchText(
+    final client = Client();
+    final res = await client.get(
       "$homepage/?page=$page",
       headers: {"referer": homepage},
     );
-    final document = parseHtml(res);
+    final document = parseHtml(res.body);
     final list = document.select("div.flw-item").map((e) {
       final url = e.selectFirst("a.film-poster")?.getAttribute("href") ?? "";
       final title = e.selectFirst("div.film-detail > h3")?.text ?? "";
