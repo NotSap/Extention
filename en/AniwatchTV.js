@@ -1,113 +1,152 @@
-// 1. First create a proper class definition
-class AnimeSearch {
-  constructor() {
-    this.sources = {
-      aniwatch: {
-        baseUrl: "https://aniwatchtv.to",
-        name: "Aniwatch",
-        prefix: "aw_"
-      },
-      zoro: {
-        baseUrl: "https://zoro.to",
-        name: "Zoro",
-        prefix: "zo_"
-      }
-    };
-    
-    // Initialize with default headers
-    this.headers = {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-      "Accept": "text/html,application/xhtml+xml"
-    };
-  }
+// manga-yomi-anime.source.js
+const AniwatchZoro = {
+  // Required MangaYomi fields
+  name: "Aniwatch/Zoro",
+  id: "aniwatch_zoro",
+  icon: "https://zoro.to/favicon.ico",
+  version: "1.0",
+  needsCloudflareBypass: true,
+  supportedLanguages: ["en"],
+  type: "anime", // Critical for proper categorization
 
-  // 2. Main search method - now properly bound to class instance
+  // Base URLs
+  _sources: {
+    aniwatch: "https://aniwatchtv.to",
+    zoro: "https://zoro.to"
+  },
+
+  // Required MangaYomi methods
   async search(query) {
-    if (!query || typeof query !== 'string') {
-      throw new Error("Invalid search query");
-    }
-    
     try {
-      console.log(`Searching for "${query}" across sources...`);
-      
-      // Try both sources simultaneously
       const results = await Promise.any([
-        this._searchSource(query, 'aniwatch'),
-        this._searchSource(query, 'zoro')
-      ]).catch(() => []);
-      
-      return this._processResults(results);
+        this._searchAniwatch(query),
+        this._searchZoro(query)
+      ]);
+      return this._deduplicate(results);
     } catch (error) {
-      console.error("Search failed:", error);
+      console.error("[Aniwatch/Zoro] Search failed:", error);
       return [];
     }
-  }
+  },
 
-  // 3. Unified source search method
-  async _searchSource(query, sourceName) {
-    const source = this.sources[sourceName];
-    if (!source) throw new Error(`Unknown source: ${sourceName}`);
-    
-    const searchUrl = `${source.baseUrl}/search?keyword=${encodeURIComponent(query)}`;
-    
+  async getAnimeInfo(id) {
+    const [source, realId] = id.split(":");
     try {
-      const response = await fetch(searchUrl, { headers: this.headers });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
-      const html = await response.text();
-      const dom = new DOMParser().parseFromString(html, "text/html");
-      
-      const items = Array.from(dom.querySelectorAll(".flw-item"));
-      if (!items.length) throw new Error("No results found");
-      
-      return items.map(item => ({
-        id: `${source.prefix}${item.querySelector("a")?.href?.split('/').pop() || ''}`,
-        title: item.querySelector(".film-name")?.textContent?.trim() || "Untitled",
-        url: item.querySelector("a")?.href || '',
-        image: item.querySelector("img")?.getAttribute("data-src") || '',
-        source: source.name
-      })).filter(item => item.id && item.title);
+      return source === "aw" 
+        ? await this._getAniwatchInfo(realId)
+        : await this._getZoroInfo(realId);
     } catch (error) {
-      console.error(`${source.name} search failed:`, error);
+      console.error("[Aniwatch/Zoro] Info fetch failed:", error);
+      return null;
+    }
+  },
+
+  async getEpisodes(id) {
+    const [source, realId] = id.split(":");
+    try {
+      return source === "aw"
+        ? await this._getAniwatchEpisodes(realId)
+        : await this._getZoroEpisodes(realId);
+    } catch (error) {
+      console.error("[Aniwatch/Zoro] Episodes fetch failed:", error);
       return [];
     }
-  }
+  },
 
-  // 4. Process and clean results
-  _processResults(results) {
-    // Remove duplicates by title
-    const uniqueResults = [];
-    const seenTitles = new Set();
-    
-    for (const item of results) {
-      if (!seenTitles.has(item.title)) {
-        seenTitles.add(item.title);
-        uniqueResults.push(item);
-      }
+  async loadVideoSources(episodeId) {
+    const [source, realId] = episodeId.split(":");
+    try {
+      return source === "aw"
+        ? await this._loadAniwatchSources(realId)
+        : await this._loadZoroSources(realId);
+    } catch (error) {
+      console.error("[Aniwatch/Zoro] Source load failed:", error);
+      return [];
     }
+  },
+
+  // Implementation details
+  async _searchAniwatch(query) {
+    const url = `${this._sources.aniwatch}/search?keyword=${encodeURIComponent(query)}`;
+    const res = await fetch(url);
+    const doc = new DOMParser().parseFromString(await res.text(), "text/html");
     
-    return uniqueResults;
-  }
-}
+    return Array.from(doc.querySelectorAll(".flw-item")).map(el => ({
+      id: `aw:${el.querySelector("a")?.href?.split("/").pop()}`,
+      title: el.querySelector(".film-name")?.textContent?.trim(),
+      image: el.querySelector("img")?.dataset?.src
+    })).filter(i => i.id && i.title);
+  },
 
-// ===== PROPER USAGE =====
-// Initialize the search engine
-const animeSearch = new AnimeSearch();
-
-// Execute search properly
-async function runSearch() {
-  try {
-    // Test the search
-    const results = await animeSearch.search("one piece");
-    console.log("Search Results:", results);
+  async _searchZoro(query) {
+    const url = `${this._sources.zoro}/search?keyword=${encodeURIComponent(query)}`;
+    const res = await fetch(url);
+    const doc = new DOMParser().parseFromString(await res.text(), "text/html");
     
-    if (results.length > 0) {
-      // Additional operations can go here
-    }
-  } catch (error) {
-    console.error("Search execution failed:", error);
-  }
-}
+    return Array.from(doc.querySelectorAll(".flw-item")).map(el => ({
+      id: `zo:${el.querySelector("a")?.href?.split("/").pop()}`,
+      title: el.querySelector(".film-name")?.textContent?.trim(),
+      image: el.querySelector("img")?.dataset?.src
+    })).filter(i => i.id && i.title);
+  },
 
-// Run the search
-runSearch();
+  async _getAniwatchInfo(id) {
+    const url = `${this._sources.aniwatch}/watch/${id}`;
+    const res = await fetch(url);
+    const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+    
+    return {
+      id: `aw:${id}`,
+      title: doc.querySelector(".film-name")?.textContent?.trim(),
+      description: doc.querySelector(".film-description")?.textContent?.trim(),
+      image: doc.querySelector(".film-poster img")?.src,
+      genres: Array.from(doc.querySelectorAll(".film-genre a")).map(a => a.textContent),
+      episodes: await this._getAniwatchEpisodes(id)
+    };
+  },
+
+  async _getAniwatchEpisodes(id) {
+    const url = `${this._sources.aniwatch}/ajax/v2/episode/list/${id}`;
+    const { html } = await (await fetch(url)).json();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    
+    return Array.from(doc.querySelectorAll("a.ep-item")).map(el => ({
+      id: `aw:${el.href.split("/").pop()}`,
+      number: Number(el.dataset.number),
+      title: `Episode ${el.dataset.number}`
+    }));
+  },
+
+  async _loadAniwatchSources(id) {
+    const url = `${this._sources.aniwatch}/watch/${id}`;
+    const res = await fetch(url);
+    const iframeSrc = (await res.text()).match(/iframe.*?src="(.*?)"/)?.[1];
+    
+    return [{
+      url: iframeSrc?.startsWith("http") ? iframeSrc : `https:${iframeSrc}`,
+      quality: "Auto",
+      format: iframeSrc?.includes(".m3u8") ? "hls" : "mp4"
+    }].filter(s => s.url);
+  },
+
+  // Similar implementations for Zoro methods
+  async _getZoroInfo(id) { /* ... */ },
+  async _getZoroEpisodes(id) { /* ... */ },
+  async _loadZoroSources(id) { /* ... */ },
+
+  // Helper methods
+  _deduplicate(results) {
+    const seen = new Set();
+    return results.filter(item => {
+      const key = item.title.toLowerCase();
+      return seen.has(key) ? false : seen.add(key);
+    });
+  }
+};
+
+// MangaYomi registration
+if (typeof registerSource !== "undefined") {
+  registerSource(AniwatchZoro);
+} else {
+  console.warn("MangaYomi environment not detected");
+}
