@@ -251,16 +251,30 @@ async getVideoList(url) {
         const subPref = preferences.get("preferred_sub") || "sub";
         const ep = JSON.parse(url);
         
-        // Get all available translation types from episode data
+        // Debugging: Log the episode info we're working with
+        console.log("Processing episode:", {
+            showId: ep.showId,
+            episodeString: ep.episodeString,
+            translationTypes: ep.translationType
+        });
+
+        // Get all available translation types
         const allTranslationTypes = Array.isArray(ep.translationType) ? 
             [...new Set(ep.translationType)] : 
-            (ep.translationType ? [ep.translationType] : ["sub"]); // Default to sub if none specified
-        
+            (ep.translationType ? [ep.translationType] : ["sub"]);
+
+        // Debugging: Log available types
+        console.log("Available translation types:", allTranslationTypes);
+
         const videos = [];
         const altHosterSelection = preferences.get('alt_hoster_selection1') || [];
         
-        // 1. FIRST PASS: Try preferred type only
+        // Debugging: Log hoster selection
+        console.log("Enabled hosters:", altHosterSelection);
+
+        // 1. First try preferred type
         if (allTranslationTypes.includes(subPref)) {
+            console.log(`Trying preferred type: ${subPref}`);
             const preferredVideos = await this.fetchVideosForType(
                 ep.showId,
                 ep.episodeString,
@@ -269,14 +283,16 @@ async getVideoList(url) {
                 altHosterSelection
             );
             videos.push(...preferredVideos);
+            console.log(`Found ${preferredVideos.length} videos for preferred type`);
         }
-        
-        // 2. SECOND PASS: If no preferred videos found, try all available types
+
+        // 2. If no videos found, try all other available types
         if (videos.length === 0) {
+            console.log("No preferred videos found, trying all types");
             for (const transType of allTranslationTypes) {
-                // Skip if we already tried the preferred type
                 if (transType === subPref) continue;
                 
+                console.log(`Trying type: ${transType}`);
                 const typeVideos = await this.fetchVideosForType(
                     ep.showId,
                     ep.episodeString,
@@ -285,11 +301,13 @@ async getVideoList(url) {
                     altHosterSelection
                 );
                 videos.push(...typeVideos);
+                console.log(`Found ${typeVideos.length} videos for ${transType}`);
             }
         }
-        
-        // 3. THIRD PASS: If still no videos, try with default type (sub)
+
+        // 3. Final fallback to sub if still no videos
         if (videos.length === 0 && !allTranslationTypes.includes("sub")) {
+            console.log("No videos found, trying fallback to sub");
             const defaultVideos = await this.fetchVideosForType(
                 ep.showId,
                 ep.episodeString,
@@ -298,8 +316,10 @@ async getVideoList(url) {
                 altHosterSelection
             );
             videos.push(...defaultVideos);
+            console.log(`Found ${defaultVideos.length} fallback videos`);
         }
-        
+
+        console.log(`Total videos found: ${videos.length}`);
         return this.sortVideos(videos);
     } catch (error) {
         console.error("Error in getVideoList:", error);
@@ -307,7 +327,6 @@ async getVideoList(url) {
     }
 }
 
-// New helper function to fetch videos for specific type
 async fetchVideosForType(showId, episodeString, transType, baseUrl, altHosterSelection) {
     const videos = [];
     const scanlator = transType === "sub" ? "sub" : "dub";
@@ -315,24 +334,46 @@ async fetchVideosForType(showId, episodeString, transType, baseUrl, altHosterSel
     try {
         const encodedGql = `?variables=%0A%20%20%20%20%20%20%20%20%7B%0A%20%20%20%20%20%20%20%20%20%20%22showId%22:%20%22${showId}%22,%0A%20%20%20%20%20%20%20%20%20%20%22episodeString%22:%20%22${episodeString}%22,%0A%20%20%20%20%20%20%20%20%20%20%22translationType%22:%20%22${transType}%22%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20&query=%0A%20%20%20%20%20%20%20%20query(%0A%20%20%20%20%20%20%20%20%20%20$showId:%20String!%0A%20%20%20%20%20%20%20%20%20%20$episodeString:%20String!%0A%20%20%20%20%20%20%20%20%20%20$translationType:%20VaildTranslationTypeEnumType!%0A%20%20%20%20%20%20%20%20)%20%7B%0A%20%20%20%20%20%20%20%20%20%20episode(%0A%20%20%20%20%20%20%20%20%20%20%20%20showId:%20$showId%0A%20%20%20%20%20%20%20%20%20%20%20%20episodeString:%20$episodeString%0A%20%20%20%20%20%20%20%20%20%20%20%20translationType:%20$translationType%0A%20%20%20%20%20%20%20%20%20%20)%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20sourceUrls%0A%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20`;
         
-        const videoJson = JSON.parse(await this.request(encodedGql));
-        
+        console.log(`Fetching videos for ${scanlator} with query:`, encodedGql);
+        const response = await this.request(encodedGql);
+        console.log(`API response for ${scanlator}:`, response);
+
+        const videoJson = JSON.parse(response);
+        console.log(`Parsed JSON for ${scanlator}:`, videoJson);
+
         if (!videoJson?.data?.episode?.sourceUrls) {
+            console.log(`No sourceUrls found for ${scanlator}`);
             return videos;
         }
+
+        console.log(`Found ${videoJson.data.episode.sourceUrls.length} sources for ${scanlator}`);
         
         for (const video of videoJson.data.episode.sourceUrls) {
             try {
+                if (!video.sourceUrl) {
+                    console.log("Skipping empty sourceUrl");
+                    continue;
+                }
+
+                console.log(`Processing source: ${video.sourceUrl.substring(0, 50)}...`);
                 const videoUrl = this.decryptSource(video.sourceUrl);
-                
-                // Add all hoster processing logic here (same as before)
+                console.log(`Decrypted URL: ${videoUrl.substring(0, 50)}...`);
+
+                if (!videoUrl) {
+                    console.log("Skipping empty decrypted URL");
+                    continue;
+                }
+
+                // Process internal player
                 if (videoUrl.includes("/apivtwo/") && altHosterSelection.includes('player')) {
+                    console.log("Processing internal player source");
                     const quality = `internal ${video.sourceName} (${scanlator})`;
                     const vids = await new AllAnimeExtractor({ "Referer": baseUrl }, "https://allanime.to").videoFromUrl(videoUrl, quality);
+                    console.log(`Found ${vids.length} internal player videos`);
                     videos.push(...vids);
                 }
-                // ... [include all other hoster checks from original code]
-                
+                // Add other hoster processing here...
+
             } catch (error) {
                 console.error(`Error processing ${scanlator} video source:`, error);
             }
@@ -341,22 +382,9 @@ async fetchVideosForType(showId, episodeString, transType, baseUrl, altHosterSel
         console.error(`Error fetching ${scanlator} videos:`, error);
     }
     
+    console.log(`Returning ${videos.length} videos for ${scanlator}`);
     return videos;
 }
-
-    decryptSource(str) {
-        if (!str) return "";
-        
-        if (str.startsWith("-")) {
-            return str.substring(str.lastIndexOf('-') + 1)
-                .match(/.{1,2}/g)
-                .map(hex => parseInt(hex, 16))
-                .map(byte => String.fromCharCode(byte ^ 56))
-                .join("");
-        } else {
-            return str;
-        }
-    }
 
     getSourcePreferences() {
         return [
