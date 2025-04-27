@@ -1,4 +1,4 @@
-globalThis.extension = {
+globalThis.source = new Extension({
     name: "BestDubbedAnime",
     version: "1.0.0",
     type: "anime",
@@ -114,4 +114,4 @@ globalThis.extension = {
     getSettings() {
         return [];
     },
-};
+});
