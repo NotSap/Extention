@@ -1,5 +1,5 @@
-final Client client = Client(source);
 import 'package:mangayomi/bridge_lib.dart';
+final Client client = Client(source);
 
 class NineAnimeTv extends MProvider {
   NineAnimeTv({required this.source});
