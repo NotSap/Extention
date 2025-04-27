@@ -1,134 +1,113 @@
-class AnimeAPI {
+// 1. First create a proper class definition
+class AnimeSearch {
   constructor() {
-    this.config = {
-      name: "AniwatchTV + Zoro Fallback",
-      version: "1.0",
+    this.sources = {
       aniwatch: {
         baseUrl: "https://aniwatchtv.to",
-        searchPath: "/search",
-        ajaxPath: "/ajax/v2/episode/list"
+        name: "Aniwatch",
+        prefix: "aw_"
       },
       zoro: {
         baseUrl: "https://zoro.to",
-        searchPath: "/search",
-        ajaxPath: "/ajax/v2/episode/list"
-      },
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml"
+        name: "Zoro",
+        prefix: "zo_"
       }
+    };
+    
+    // Initialize with default headers
+    this.headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+      "Accept": "text/html,application/xhtml+xml"
     };
   }
 
-  // Main search method
+  // 2. Main search method - now properly bound to class instance
   async search(query) {
+    if (!query || typeof query !== 'string') {
+      throw new Error("Invalid search query");
+    }
+    
     try {
-      console.log(`Initiating search for: ${query}`);
+      console.log(`Searching for "${query}" across sources...`);
       
+      // Try both sources simultaneously
       const results = await Promise.any([
-        this._searchAniwatch(query),
-        this._searchZoro(query)
+        this._searchSource(query, 'aniwatch'),
+        this._searchSource(query, 'zoro')
       ]).catch(() => []);
-
-      if (!results.length) {
-        throw new Error("No results from any source");
-      }
-
-      return this._removeDuplicates(results);
+      
+      return this._processResults(results);
     } catch (error) {
-      console.error("Search error:", error);
+      console.error("Search failed:", error);
       return [];
     }
   }
 
-  // Aniwatch search implementation
-  async _searchAniwatch(query) {
-    const url = `${this.config.aniwatch.baseUrl}${this.config.aniwatch.searchPath}?keyword=${encodeURIComponent(query)}`;
+  // 3. Unified source search method
+  async _searchSource(query, sourceName) {
+    const source = this.sources[sourceName];
+    if (!source) throw new Error(`Unknown source: ${sourceName}`);
+    
+    const searchUrl = `${source.baseUrl}/search?keyword=${encodeURIComponent(query)}`;
     
     try {
-      const response = await fetch(url, { headers: this.config.headers });
+      const response = await fetch(searchUrl, { headers: this.headers });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       
       const html = await response.text();
       const dom = new DOMParser().parseFromString(html, "text/html");
       
-      return Array.from(dom.querySelectorAll(".flw-item")).map(item => ({
-        id: `aw_${item.querySelector("a")?.href?.split('/').pop()}`,
-        title: item.querySelector(".film-name")?.textContent?.trim(),
-        url: item.querySelector("a")?.href,
-        image: item.querySelector("img")?.getAttribute("data-src"),
-        source: "Aniwatch"
+      const items = Array.from(dom.querySelectorAll(".flw-item"));
+      if (!items.length) throw new Error("No results found");
+      
+      return items.map(item => ({
+        id: `${source.prefix}${item.querySelector("a")?.href?.split('/').pop() || ''}`,
+        title: item.querySelector(".film-name")?.textContent?.trim() || "Untitled",
+        url: item.querySelector("a")?.href || '',
+        image: item.querySelector("img")?.getAttribute("data-src") || '',
+        source: source.name
       })).filter(item => item.id && item.title);
     } catch (error) {
-      console.error("Aniwatch search failed:", error);
+      console.error(`${source.name} search failed:`, error);
       return [];
     }
   }
 
-  // Zoro search fallback
-  async _searchZoro(query) {
-    const url = `${this.config.zoro.baseUrl}${this.config.zoro.searchPath}?keyword=${encodeURIComponent(query)}`;
+  // 4. Process and clean results
+  _processResults(results) {
+    // Remove duplicates by title
+    const uniqueResults = [];
+    const seenTitles = new Set();
     
-    try {
-      const response = await fetch(url, { headers: this.config.headers });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
-      const html = await response.text();
-      const dom = new DOMParser().parseFromString(html, "text/html");
-      
-      return Array.from(dom.querySelectorAll(".flw-item")).map(item => ({
-        id: `zo_${item.querySelector("a")?.href?.split('/').pop()}`,
-        title: item.querySelector(".film-name")?.textContent?.trim(),
-        url: item.querySelector("a")?.href,
-        image: item.querySelector("img")?.getAttribute("data-src"),
-        source: "Zoro"
-      })).filter(item => item.id && item.title);
-    } catch (error) {
-      console.error("Zoro search failed:", error);
-      return [];
-    }
-  }
-
-  // Helper to remove duplicate results
-  _removeDuplicates(results) {
-    const unique = new Map();
-    results.forEach(item => {
-      if (!unique.has(item.title)) {
-        unique.set(item.title, item);
+    for (const item of results) {
+      if (!seenTitles.has(item.title)) {
+        seenTitles.add(item.title);
+        uniqueResults.push(item);
       }
-    });
-    return Array.from(unique.values());
-  }
-
-  // Get anime info
-  async getAnimeInfo(id) {
-    try {
-      if (id.startsWith("aw_")) {
-        return this._getAniwatchInfo(id.replace("aw_", ""));
-      } else if (id.startsWith("zo_")) {
-        return this._getZoroInfo(id.replace("zo_", ""));
-      }
-      throw new Error("Invalid ID format");
-    } catch (error) {
-      console.error("Info fetch error:", error);
-      return null;
     }
+    
+    return uniqueResults;
   }
-
-  // Additional methods for episodes, sources etc...
-  // [Previous implementations from the last code can be added here]
 }
 
-// ===== USAGE EXAMPLE =====
-const api = new AnimeAPI(); // Initialize properly
+// ===== PROPER USAGE =====
+// Initialize the search engine
+const animeSearch = new AnimeSearch();
 
-// Test search
-api.search("one piece")
-  .then(results => {
+// Execute search properly
+async function runSearch() {
+  try {
+    // Test the search
+    const results = await animeSearch.search("one piece");
     console.log("Search Results:", results);
+    
     if (results.length > 0) {
-      return api.getAnimeInfo(results[0].id);
+      // Additional operations can go here
     }
-  })
-  .then(info => console.log("Anime Info:", info))
-  .catch(err => console.error("Execution error:", err));
+  } catch (error) {
+    console.error("Search execution failed:", error);
+  }
+}
+
+// Run the search
+runSearch();
