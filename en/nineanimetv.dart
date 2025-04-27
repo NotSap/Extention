@@ -559,28 +559,3 @@ Future<List<MVideo>> rapidCloudExtractor(String url, String name) async {
 NineAnimeTv main(MSource source) {
   return NineAnimeTv(source: source);
 }
-@override
-Future<List<Video>> loadVideoSources(String episodeUrl) async {
-  final response = await get(episodeUrl);
-  final document = parseHtml(response.body);
-
-  final videoList = <Video>[];
-
-  final sourceElements = document.querySelectorAll('source');
-
-  for (final source in sourceElements) {
-    final videoUrl = source.attributes['src'];
-    if (videoUrl != null && videoUrl.isNotEmpty) {
-      videoList.add(
-        Video(
-          videoUrl,
-          'Default',
-          videoUrl,
-          headers: {'Referer': episodeUrl},
-        ),
-      );
-    }
-  }
-
-  return videoList;
-}
