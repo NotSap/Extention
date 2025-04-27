@@ -1,5 +1,25 @@
+import 'dart:io';
+import 'dart:convert';
 import 'package:mangayomi/bridge_lib.dart';
 import 'dart:convert';
+Future<String> fetchText(String url, {Map<String, String>? headers}) async {
+  final client = HttpClient();
+  final request = await client.getUrl(Uri.parse(url));
+
+  if (headers != null) {
+    headers.forEach((key, value) {
+      request.headers.add(key, value);
+    });
+  }
+
+  final response = await request.close();
+
+  if (response.statusCode == 200) {
+    return await response.transform(utf8.decoder).join();
+  } else {
+    throw Exception('Failed to load data');
+  }
+}
 
 class NineAnimeTv extends MProvider {
   NineAnimeTv({required this.source});
