@@ -6,11 +6,11 @@ Future<String> fetchText(String url, {Map<String, String>? headers}) async {
   final client = HttpClient();
   final request = await client.getUrl(Uri.parse(url));
 
-  // Use a for loop to add headers
+  // Manually adding headers using a for loop
   if (headers != null) {
-    headers.forEach((key, value) {
-      request.headers.add(key, value);
-    });
+    for (var entry in headers.entries) {
+      request.headers.add(entry.key, entry.value);
+    }
   }
 
   final response = await request.close();
