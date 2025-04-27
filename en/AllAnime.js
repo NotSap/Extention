@@ -21,20 +21,21 @@ class DefaultExtension extends MProvider {
         try {
             const response = await new Client().get(apiUrl + body, { "Referer": baseUrl });
             
-            if (!response.body) {
-                throw new Error("Empty response body");
+            if (!response?.body) {
+                console.error("Empty response body");
+                return "{}";
             }
             
             return response.body;
         } catch (error) {
             console.error("Request failed:", error);
-            throw error;
+            return "{}";
         }
     }
 
     async getPopular(page) {
         try {
-            const encodedGql = `?variables=%0A%20%20%20%20%20%20%20%20%7B%0A%20%20%20%20%20%20%20%20%20%20%22type%22:%20%22anime%22,%0A%20%20%20%20%20%20%20%20%20%20%22size%22:%2026,%0A%20%20%20%20%20%20%20%20%20%20%22dateRange%22:%201,%0A%20%20%20%20%20%20%20%20%20%20%22page%22:%20${page}%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20&query=%0A%20%20%20%20%20%20%20%20query($type:%20VaildPopularTypeEnumType!,%20$size:%20Int!,%20$dateRange:%20Int,%20$page:%20Int)%20%7B%0A%20%20%20%20%20%20%20%20%20%20queryPopular(type:%20$type,%20size:%20$size,%20dateRange:%20$dateRange,%20page:%20$page)%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20recommendations%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20anyCard%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20_id%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20name%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20englishName%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20nativeName%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20thumbnail%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20slugTime%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20`
+            const encodedGql = `?variables=%0A%20%20%20%20%20%20%20%20%7B%0A%20%20%20%20%20%20%20%20%20%20%22type%22:%20%22anime%22,%0A%20%20%20%20%20%20%20%20%20%20%22size%22:%2026,%0A%20%20%20%20%20%20%20%20%20%20%22dateRange%22:%201,%0A%20%20%20%20%20%20%20%20%20%20%22page%22:%20${page}%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20&query=%0A%20%20%20%20%20%20%20%20query($type:%20VaildPopularTypeEnumType!,%20$size:%20Int!,%20$dateRange:%20Int,%20$page:%20Int)%20%7B%0A%20%20%20%20%20%20%20%20%20%20queryPopular(type:%20$type,%20size:%20$size,%20dateRange:%20$dateRange,%20page:%20$page)%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20recommendations%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20anyCard%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20_id%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20name%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20englishName%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20nativeName%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20thumbnail%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20%20slugTime%0A%20%20%20%20%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20`;
             const response = await this.request(encodedGql);
             const jsonResponse = JSON.parse(response);
             
@@ -244,147 +245,188 @@ class DefaultExtension extends MProvider {
         }
     }
 
-async getVideoList(url) {
-    try {
-        const baseUrl = this.source.baseUrl;
-        const preferences = new SharedPreferences();
-        const subPref = preferences.get("preferred_sub") || "sub";
-        const ep = JSON.parse(url);
-        
-        // Debugging: Log the episode info we're working with
-        console.log("Processing episode:", {
-            showId: ep.showId,
-            episodeString: ep.episodeString,
-            translationTypes: ep.translationType
-        });
+    async getVideoList(url) {
+        try {
+            const baseUrl = this.source.baseUrl;
+            const preferences = new SharedPreferences();
+            const subPref = preferences.get("preferred_sub") || "sub";
+            const ep = JSON.parse(url);
+            
+            // Get all available translation types
+            const allTranslationTypes = Array.isArray(ep.translationType) ? 
+                [...new Set(ep.translationType)] : 
+                (ep.translationType ? [ep.translationType] : ["sub"]);
 
-        // Get all available translation types
-        const allTranslationTypes = Array.isArray(ep.translationType) ? 
-            [...new Set(ep.translationType)] : 
-            (ep.translationType ? [ep.translationType] : ["sub"]);
-
-        // Debugging: Log available types
-        console.log("Available translation types:", allTranslationTypes);
-
-        const videos = [];
-        const altHosterSelection = preferences.get('alt_hoster_selection1') || [];
-        
-        // Debugging: Log hoster selection
-        console.log("Enabled hosters:", altHosterSelection);
-
-        // 1. First try preferred type
-        if (allTranslationTypes.includes(subPref)) {
-            console.log(`Trying preferred type: ${subPref}`);
-            const preferredVideos = await this.fetchVideosForType(
-                ep.showId,
-                ep.episodeString,
-                subPref,
-                baseUrl,
-                altHosterSelection
-            );
-            videos.push(...preferredVideos);
-            console.log(`Found ${preferredVideos.length} videos for preferred type`);
-        }
-
-        // 2. If no videos found, try all other available types
-        if (videos.length === 0) {
-            console.log("No preferred videos found, trying all types");
-            for (const transType of allTranslationTypes) {
-                if (transType === subPref) continue;
-                
-                console.log(`Trying type: ${transType}`);
-                const typeVideos = await this.fetchVideosForType(
+            const videos = [];
+            const altHosterSelection = preferences.get('alt_hoster_selection1') || [];
+            
+            // 1. First try preferred type
+            if (allTranslationTypes.includes(subPref)) {
+                const preferredVideos = await this.fetchVideosForType(
                     ep.showId,
                     ep.episodeString,
-                    transType,
+                    subPref,
                     baseUrl,
                     altHosterSelection
                 );
-                videos.push(...typeVideos);
-                console.log(`Found ${typeVideos.length} videos for ${transType}`);
+                videos.push(...preferredVideos);
             }
-        }
 
-        // 3. Final fallback to sub if still no videos
-        if (videos.length === 0 && !allTranslationTypes.includes("sub")) {
-            console.log("No videos found, trying fallback to sub");
-            const defaultVideos = await this.fetchVideosForType(
-                ep.showId,
-                ep.episodeString,
-                "sub",
-                baseUrl,
-                altHosterSelection
-            );
-            videos.push(...defaultVideos);
-            console.log(`Found ${defaultVideos.length} fallback videos`);
-        }
+            // 2. If no videos found, try all other available types
+            if (videos.length === 0) {
+                for (const transType of allTranslationTypes) {
+                    if (transType === subPref) continue;
+                    
+                    const typeVideos = await this.fetchVideosForType(
+                        ep.showId,
+                        ep.episodeString,
+                        transType,
+                        baseUrl,
+                        altHosterSelection
+                    );
+                    videos.push(...typeVideos);
+                }
+            }
 
-        console.log(`Total videos found: ${videos.length}`);
-        return this.sortVideos(videos);
-    } catch (error) {
-        console.error("Error in getVideoList:", error);
-        return [];
+            // 3. Final fallback to sub if still no videos
+            if (videos.length === 0 && !allTranslationTypes.includes("sub")) {
+                const defaultVideos = await this.fetchVideosForType(
+                    ep.showId,
+                    ep.episodeString,
+                    "sub",
+                    baseUrl,
+                    altHosterSelection
+                );
+                videos.push(...defaultVideos);
+            }
+
+            return this.sortVideos(videos);
+        } catch (error) {
+            console.error("Error in getVideoList:", error);
+            return [];
+        }
     }
-}
 
-async fetchVideosForType(showId, episodeString, transType, baseUrl, altHosterSelection) {
-    const videos = [];
-    const scanlator = transType === "sub" ? "sub" : "dub";
-    
-    try {
-        const encodedGql = `?variables=%0A%20%20%20%20%20%20%20%20%7B%0A%20%20%20%20%20%20%20%20%20%20%22showId%22:%20%22${showId}%22,%0A%20%20%20%20%20%20%20%20%20%20%22episodeString%22:%20%22${episodeString}%22,%0A%20%20%20%20%20%20%20%20%20%20%22translationType%22:%20%22${transType}%22%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20&query=%0A%20%20%20%20%20%20%20%20query(%0A%20%20%20%20%20%20%20%20%20%20$showId:%20String!%0A%20%20%20%20%20%20%20%20%20%20$episodeString:%20String!%0A%20%20%20%20%20%20%20%20%20%20$translationType:%20VaildTranslationTypeEnumType!%0A%20%20%20%20%20%20%20%20)%20%7B%0A%20%20%20%20%20%20%20%20%20%20episode(%0A%20%20%20%20%20%20%20%20%20%20%20%20showId:%20$showId%0A%20%20%20%20%20%20%20%20%20%20%20%20episodeString:%20$episodeString%0A%20%20%20%20%20%20%20%20%20%20%20%20translationType:%20$translationType%0A%20%20%20%20%20%20%20%20%20%20)%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20sourceUrls%0A%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20`;
+    async fetchVideosForType(showId, episodeString, transType, baseUrl, altHosterSelection) {
+        const videos = [];
+        const scanlator = transType === "sub" ? "sub" : "dub";
         
-        console.log(`Fetching videos for ${scanlator} with query:`, encodedGql);
-        const response = await this.request(encodedGql);
-        console.log(`API response for ${scanlator}:`, response);
+        try {
+            const encodedGql = `?variables=%0A%20%20%20%20%20%20%20%20%7B%0A%20%20%20%20%20%20%20%20%20%20%22showId%22:%20%22${showId}%22,%0A%20%20%20%20%20%20%20%20%20%20%22episodeString%22:%20%22${episodeString}%22,%0A%20%20%20%20%20%20%20%20%20%20%22translationType%22:%20%22${transType}%22%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20&query=%0A%20%20%20%20%20%20%20%20query(%0A%20%20%20%20%20%20%20%20%20%20$showId:%20String!%0A%20%20%20%20%20%20%20%20%20%20$episodeString:%20String!%0A%20%20%20%20%20%20%20%20%20%20$translationType:%20VaildTranslationTypeEnumType!%0A%20%20%20%20%20%20%20%20)%20%7B%0A%20%20%20%20%20%20%20%20%20%20episode(%0A%20%20%20%20%20%20%20%20%20%20%20%20showId:%20$showId%0A%20%20%20%20%20%20%20%20%20%20%20%20episodeString:%20$episodeString%0A%20%20%20%20%20%20%20%20%20%20%20%20translationType:%20$translationType%0A%20%20%20%20%20%20%20%20%20%20)%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20sourceUrls%0A%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20`;
+            
+            const response = await this.request(encodedGql);
+            const videoJson = JSON.parse(response);
 
-        const videoJson = JSON.parse(response);
-        console.log(`Parsed JSON for ${scanlator}:`, videoJson);
+            if (!videoJson?.data?.episode?.sourceUrls) {
+                return videos;
+            }
+            
+            for (const video of videoJson.data.episode.sourceUrls) {
+                try {
+                    if (!video.sourceUrl) continue;
+                    
+                    const videoUrl = this.decryptSource(video.sourceUrl);
+                    if (!videoUrl) continue;
 
-        if (!videoJson?.data?.episode?.sourceUrls) {
-            console.log(`No sourceUrls found for ${scanlator}`);
+                    // Process internal player
+                    if (videoUrl.includes("/apivtwo/") && altHosterSelection.includes('player')) {
+                        const quality = `internal ${video.sourceName} (${scanlator})`;
+                        const vids = await new AllAnimeExtractor({ "Referer": baseUrl }, "https://allanime.to").videoFromUrl(videoUrl, quality);
+                        videos.push(...vids);
+                    }
+                    // Process vidstreaming
+                    else if (["vidstreaming", "https://gogo", "playgo1.cc", "playtaku", "vidcloud"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('vidstreaming')) {
+                        const vids = await gogoCdnExtractor(videoUrl);
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
+                    // Process doodstream
+                    else if (["dood", "d0"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('dood')) {
+                        const vids = await doodExtractor(videoUrl);
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
+                    // Process okru
+                    else if (["ok.ru", "okru"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('okru')) {
+                        const vids = await okruExtractor(videoUrl);
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
+                    // Process mp4upload
+                    else if (videoUrl.includes("mp4upload.com") && altHosterSelection.includes('mp4upload')) {
+                        const vids = await mp4UploadExtractor(videoUrl);
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
+                    // Process streamlare
+                    else if (videoUrl.includes("streamlare.com") && altHosterSelection.includes('streamlare')) {
+                        const vids = await streamlareExtractor(videoUrl, 'Streamlare ');
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
+                    // Process filemoon
+                    else if (["filemoon", "moonplayer"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('filemoon')) {
+                        const vids = await filemoonExtractor(videoUrl);
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
+                    // Process streamwish
+                    else if (videoUrl.includes("wish") && altHosterSelection.includes('streamwish')) {
+                        const vids = await streamWishExtractor(videoUrl, 'StreamWish ');
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
+                } catch (error) {
+                    console.error(`Error processing ${scanlator} video source:`, error);
+                }
+            }
+        } catch (error) {
+            console.error(`Error fetching ${scanlator} videos:`, error);
+        }
+        
+        return videos;
+    }
+
+    sortVideos(videos) {
+        try {
+            const preferences = new SharedPreferences();
+            const hoster = preferences.get("preferred_hoster1") || "";
+            const quality = preferences.get("preferred_quality") || "";
+            
+            videos.sort((a, b) => {
+                let qualityMatchA = 0;
+                if (a.quality.includes(hoster) && a.quality.includes(quality)) {
+                    qualityMatchA = 1;
+                }
+                
+                let qualityMatchB = 0;
+                if (b.quality.includes(hoster) && b.quality.includes(quality)) {
+                    qualityMatchB = 1;
+                }
+                
+                return qualityMatchB - qualityMatchA;
+            });
+            
+            return videos;
+        } catch (error) {
+            console.error("Error in sortVideos:", error);
             return videos;
         }
-
-        console.log(`Found ${videoJson.data.episode.sourceUrls.length} sources for ${scanlator}`);
-        
-        for (const video of videoJson.data.episode.sourceUrls) {
-            try {
-                if (!video.sourceUrl) {
-                    console.log("Skipping empty sourceUrl");
-                    continue;
-                }
-
-                console.log(`Processing source: ${video.sourceUrl.substring(0, 50)}...`);
-                const videoUrl = this.decryptSource(video.sourceUrl);
-                console.log(`Decrypted URL: ${videoUrl.substring(0, 50)}...`);
-
-                if (!videoUrl) {
-                    console.log("Skipping empty decrypted URL");
-                    continue;
-                }
-
-                // Process internal player
-                if (videoUrl.includes("/apivtwo/") && altHosterSelection.includes('player')) {
-                    console.log("Processing internal player source");
-                    const quality = `internal ${video.sourceName} (${scanlator})`;
-                    const vids = await new AllAnimeExtractor({ "Referer": baseUrl }, "https://allanime.to").videoFromUrl(videoUrl, quality);
-                    console.log(`Found ${vids.length} internal player videos`);
-                    videos.push(...vids);
-                }
-                // Add other hoster processing here...
-
-            } catch (error) {
-                console.error(`Error processing ${scanlator} video source:`, error);
-            }
-        }
-    } catch (error) {
-        console.error(`Error fetching ${scanlator} videos:`, error);
     }
-    
-    console.log(`Returning ${videos.length} videos for ${scanlator}`);
-    return videos;
-}
+
+    decryptSource(str) {
+        if (!str) return "";
+        
+        if (str.startsWith("-")) {
+            return str.substring(str.lastIndexOf('-') + 1)
+                .match(/.{1,2}/g)
+                .map(hex => parseInt(hex, 16))
+                .map(byte => String.fromCharCode(byte ^ 56))
+                .join("");
+        } else {
+            return str;
+        }
+    }
 
     getSourcePreferences() {
         return [
