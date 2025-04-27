@@ -1,5 +1,6 @@
 import 'package:mangayomi/bridge_lib.dart';
 import 'dart:convert';
+import 'package:html/parser.dart' show parse;
 
 class NineAnimeTv extends MProvider {
   NineAnimeTv({required this.source});
@@ -172,186 +173,70 @@ class NineAnimeTv extends MProvider {
   }
 
 @override
-Future<List<MVideo>> getVideoList(String url) async {
-  final res = (await client.get(
-    Uri.parse("${source.baseUrl}/ajax/episode/servers?episodeId=$url"),
-  )).body;
+Future<List<Video>> getVideoList(String url) async {
+  try {
+    final response = await http.get(Uri.parse('$baseUrl$url'));
+    final doc = parse(response.body);
+    final videos = <Video>[];
 
-  final html = json.decode(res)["html"];
-  final serverElements = parseHtml(html).select("div.server-item");
-
-  List<MVideo> videos = [];
-  final hosterSelection = preferenceHosterSelection(source.id);
-  final typeSelection = preferenceTypeSelection(source.id);
-
-  for (var serverElement in serverElements) {
-    final name = serverElement.text;
-    final id = serverElement.attr("data-id");
-    final subDub = serverElement.attr("data-type");
-
-    // Fetch the episode sources
-    final res = (await client.get(
-      Uri.parse("${source.baseUrl}/ajax/episode/sources?id=$id"),
-    )).body;
-    final epUrl = json.decode(res)["link"];
-
-    if (hosterSelection.contains(name) && typeSelection.contains(subDub)) {
-      if (name.contains("Vidstreaming")) {
-        final vidStreamVideos = await rapidCloudExtractor(epUrl, "Vidstreaming - $subDub");
-        videos.addAll(vidStreamVideos);
-      } else if (name.contains("Vidcloud")) {
-        final vidCloudVideos = await rapidCloudExtractor(epUrl, "Vidcloud - $subDub");
-        videos.addAll(vidCloudVideos);
-      }
-    }
-  }
-
-  return sortVideos(videos, source.id);
-}
-
-  MPages parseAnimeList(String res) {
-    final elements = parseHtml(res).select("div.film_list-wrap > div");
-    List<MManga> animeList = [];
-    for (var element in elements) {
-      MManga anime = MManga();
-      anime.name = element.selectFirst("div.film-detail > h3 > a").text;
-      anime.imageUrl = element.selectFirst(" div.film-poster > img").getSrc;
-      anime.link = element.selectFirst("div.film-detail > h3 > a").getHref;
-      animeList.add(anime);
-    }
-
-    return MPages(animeList, true);
-  }
-
-Future<List<MVideo>> rapidCloudExtractor(String url, String name) async {
-  final serverUrl = ['https://megacloud.tv', 'https://rapid-cloud.co'];
-  final serverType = url.startsWith('https://megacloud.tv') || url.startsWith('https://megacloud.club') ? 0 : 1;
-  final sourceUrl = [
-    '/embed-2/ajax/e-1/getSources?id=',
-    '/ajax/embed-6-v2/getSources?id=',
-  ];
-  final sourceSpliter = ['/e-1/', '/embed-6-v2/'];
-  final id = url.split(sourceSpliter[serverType]).last.split('?').first;
-
-  // Fetch the server response
-  final resServer = (await client.get(
-    Uri.parse('${serverUrl[serverType]}${sourceUrl[serverType]}$id'),
-    headers: {"X-Requested-With": "XMLHttpRequest"},
-  )).body;
-  final encrypted = getMapValue(resServer, "encrypted");
-  String videoResJson = "";
-  List<MVideo> videos = [];
-
-  if (encrypted == "true") {
-    final ciphered = getMapValue(resServer, "sources");
-    List<List<int>> indexPairs = await generateIndexPairs(serverType);
-    var password = '';
-    String ciphertext = ciphered;
-    int index = 0;
-
-    // Decrypt the video sources
-    for (List<int> item in json.decode(json.encode(indexPairs))) {
-      int start = item.first + index;
-      int end = start + item.last;
-      String passSubstr = ciphered.substring(start, end);
-      password += passSubstr;
-      ciphertext = ciphertext.replaceFirst(passSubstr, "");
-      index += item.last;
-    }
-    videoResJson = decryptAESCryptoJS(ciphertext, password);
-  } else {
-    videoResJson = json.encode(
-      (json.decode(resServer)["sources"] as List<Map<String, dynamic>>),
-    );
-  }
-
-  // Extract the video URL and subtitles
-  String masterUrl = ((json.decode(videoResJson) as List<Map<String, dynamic>>).first)['file'];
-  String type = ((json.decode(videoResJson) as List<Map<String, dynamic>>).first)['type'];
-  final tracks = (json.decode(resServer)['tracks'] as List)
-      .where((e) => e['kind'] == 'captions')
-      .toList();
-  List<MTrack> subtitles = [];
-
-  for (var sub in tracks) {
-    try {
-      MTrack subtitle = MTrack();
-      subtitle..label = sub["label"]..file = sub["file"];
-      subtitles.add(subtitle);
-    } catch (_) {}
-  }
-
-  if (type == "hls") {
-    final masterPlaylistRes = (await client.get(Uri.parse(masterUrl))).body;
-
-    for (var it in substringAfter(
-      masterPlaylistRes,
-      "#EXT-X-STREAM-INF:",
-    ).split("#EXT-X-STREAM-INF:")) {
-      final quality = "${substringBefore(substringBefore(substringAfter(substringAfter(it, "RESOLUTION="), "x"), ","), "\n")}p";
-      String videoUrl = substringBefore(substringAfter(it, "\n"), "\n");
-
-      if (!videoUrl.startsWith("http")) {
-        videoUrl = "${masterUrl.split("/").sublist(0, masterUrl.split("/").length - 1).join("/")}/$videoUrl";
-      }
-
-      MVideo video = MVideo();
-      video..url = videoUrl..originalUrl = videoUrl..quality = "$name - $quality"..subtitles = subtitles;
-      videos.add(video);
-    }
-  } else {
-    MVideo video = MVideo();
-    video..url = masterUrl..originalUrl = masterUrl..quality = "$name - Default"..subtitles = subtitles;
-    videos.add(video);
-  }
-  return videos;
-}
-
-  Future<List<List<int>>> generateIndexPairs(int serverType) async {
-    final jsPlayerUrl = [
-      "https://megacloud.tv/js/player/a/prod/e1-player.min.js",
-      "https://rapid-cloud.co/js/player/prod/e6-player-v2.min.js",
-    ];
-    final scriptText =
-        (await client.get(Uri.parse(jsPlayerUrl[serverType]))).body;
-
-    final switchCode = scriptText.substring(
-      scriptText.lastIndexOf('switch'),
-      scriptText.indexOf('=partKey'),
-    );
-
-    List<int> indexes = [];
-    for (var variableMatch
-        in RegExp(r'=(\w+)').allMatches(switchCode).toList()) {
-      final regex = RegExp(
-        ',${(variableMatch as RegExpMatch).group(1)}=((?:0x)?([0-9a-fA-F]+))',
-      );
-      Match? match = regex.firstMatch(scriptText);
-
-      if (match != null) {
-        String value = match.group(1);
-        if (value.contains("0x")) {
-          indexes.add(int.parse(substringAfter(value, "0x"), radix: 16));
-        } else {
-          indexes.add(int.parse(value));
+    // Method 1: Extract from JSON in script tags
+    final scripts = doc.querySelectorAll('script');
+    for (final script in scripts) {
+      final content = script.text;
+      if (content.contains('sources') && content.contains('file')) {
+        final match = RegExp(r'sources:\s*(\[[^\]]+\])').firstMatch(content);
+        if (match != null) {
+          final sources = json.decode(match.group(1) as List;
+          for (final source in sources) {
+            final url = source['file']?.toString();
+            final quality = source['label']?.toString() ?? 'Unknown';
+            if (url != null && url.isNotEmpty) {
+              videos.add(Video(url, '${quality}p', url));
+            }
+          }
+          return videos; // Return if found
         }
       }
     }
 
-    return chunked(indexes, 2);
-  }
-
-  List<List<int>> chunked(List<int> list, int size) {
-    List<List<int>> chunks = [];
-    for (int i = 0; i < list.length; i += size) {
-      int end = list.length;
-      if (i + size < list.length) {
-        end = i + size;
+    // Method 2: Check for iframes
+    final iframe = doc.querySelector('iframe');
+    if (iframe != null) {
+      final src = iframe.attributes['src'];
+      if (src != null && src.isNotEmpty) {
+        videos.add(Video(
+          src.startsWith('http') ? src : 'https:$src',
+          'Default',
+          src,
+        ));
+        return videos;
       }
-      chunks.add(list.sublist(i, end));
     }
-    return chunks;
+
+    // Method 3: Check for NineAnime's special players
+    final playerData = doc.querySelector('[data-player]')?.attributes['data-player'];
+    if (playerData != null) {
+      try {
+        final playerJson = json.decode(playerData);
+        final videoUrl = playerJson['file']?.toString();
+        if (videoUrl != null) {
+          videos.add(Video(videoUrl, 'HD', videoUrl));
+          return videos;
+        }
+      } catch (e) {
+        print('Error parsing player data: $e');
+      }
+    }
+
+    // Fallback: Print HTML for debugging
+    print('Could not find videos in: ${doc.outerHtml.substring(0, 500)}...');
+    return videos;
+    
+  } catch (e) {
+    print('Error in getVideoList: $e');
+    return [];
   }
+}
 
   @override
   List<dynamic> getFilterList() {
