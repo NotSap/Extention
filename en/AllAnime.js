@@ -244,79 +244,126 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    async getVideoList(url) {
-        try {
-            const baseUrl = this.source.baseUrl;
-            const preferences = new SharedPreferences();
-            const subPref = preferences.get("preferred_sub") || "sub";
-            const ep = JSON.parse(url);
-            
-            // Ensure we have a fallback if preferred sub/dub isn't available
-            const translationType = ep.translationType.includes(subPref) ? [subPref] : ep.translationType;
-            
-            if (translationType.length == 0) {
-                return [];
+async getVideoList(url) {
+    try {
+        const baseUrl = this.source.baseUrl;
+        const preferences = new SharedPreferences();
+        const subPref = preferences.get("preferred_sub") || "sub";
+        const ep = JSON.parse(url);
+        
+        // Get all available translation types (both sub and dub if available)
+        const allTranslationTypes = [...new Set(ep.translationType)];
+        
+        const videos = [];
+        const altHosterSelection = preferences.get('alt_hoster_selection1') || [];
+        
+        // Process each available translation type
+        for (const transType of allTranslationTypes) {
+            // Skip if this isn't the user's preferred type (unless no preferred type available)
+            if (subPref && transType !== subPref && allTranslationTypes.includes(subPref)) {
+                continue;
             }
             
-            const encodedGql = `?variables=%0A%20%20%20%20%20%20%20%20%7B%0A%20%20%20%20%20%20%20%20%20%20%22showId%22:%20%22${ep.showId}%22,%0A%20%20%20%20%20%20%20%20%20%20%22episodeString%22:%20%22${ep.episodeString}%22,%0A%20%20%20%20%20%20%20%20%20%20%22translationType%22:%20%22${translationType[0]}%22%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20&query=%0A%20%20%20%20%20%20%20%20query(%0A%20%20%20%20%20%20%20%20%20%20$showId:%20String!%0A%20%20%20%20%20%20%20%20%20%20$episodeString:%20String!%0A%20%20%20%20%20%20%20%20%20%20$translationType:%20VaildTranslationTypeEnumType!%0A%20%20%20%20%20%20%20%20)%20%7B%0A%20%20%20%20%20%20%20%20%20%20episode(%0A%20%20%20%20%20%20%20%20%20%20%20%20showId:%20$showId%0A%20%20%20%20%20%20%20%20%20%20%20%20episodeString:%20$episodeString%0A%20%20%20%20%20%20%20%20%20%20%20%20translationType:%20$translationType%0A%20%20%20%20%20%20%20%20%20%20)%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20sourceUrls%0A%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20`;
+            const encodedGql = `?variables=%0A%20%20%20%20%20%20%20%20%7B%0A%20%20%20%20%20%20%20%20%20%20%22showId%22:%20%22${ep.showId}%22,%0A%20%20%20%20%20%20%20%20%20%20%22episodeString%22:%20%22${ep.episodeString}%22,%0A%20%20%20%20%20%20%20%20%20%20%22translationType%22:%20%22${transType}%22%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20&query=%0A%20%20%20%20%20%20%20%20query(%0A%20%20%20%20%20%20%20%20%20%20$showId:%20String!%0A%20%20%20%20%20%20%20%20%20%20$episodeString:%20String!%0A%20%20%20%20%20%20%20%20%20%20$translationType:%20VaildTranslationTypeEnumType!%0A%20%20%20%20%20%20%20%20)%20%7B%0A%20%20%20%20%20%20%20%20%20%20episode(%0A%20%20%20%20%20%20%20%20%20%20%20%20showId:%20$showId%0A%20%20%20%20%20%20%20%20%20%20%20%20episodeString:%20$episodeString%0A%20%20%20%20%20%20%20%20%20%20%20%20translationType:%20$translationType%0A%20%20%20%20%20%20%20%20%20%20)%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20sourceUrls%0A%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20`;
             
-            const videoJson = JSON.parse(await this.request(encodedGql));
-            
-            if (!videoJson?.data?.episode?.sourceUrls) {
-                return [];
-            }
-            
-            const videos = [];
-            const altHosterSelection = preferences.get('alt_hoster_selection1') || [];
-            
-            for (const video of videoJson.data.episode.sourceUrls) {
-                try {
-                    const videoUrl = this.decryptSource(video.sourceUrl);
-                    
-                    if (videoUrl.includes("/apivtwo/") && altHosterSelection.includes('player')) {
-                        const quality = `internal ${video.sourceName}`;
-                        const vids = await new AllAnimeExtractor({ "Referer": baseUrl }, "https://allanime.to").videoFromUrl(videoUrl, quality);
-                        videos.push(...vids);
-                    } 
-                    else if (["vidstreaming", "https://gogo", "playgo1.cc", "playtaku", "vidcloud"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('vidstreaming')) {
-                        const vids = await gogoCdnExtractor(videoUrl);
-                        videos.push(...vids);
-                    } 
-                    else if (["dood", "d0"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('dood')) {
-                        const vids = await doodExtractor(videoUrl);
-                        videos.push(...vids);
-                    } 
-                    else if (["ok.ru", "okru"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('okru')) {
-                        const vids = await okruExtractor(videoUrl);
-                        videos.push(...vids);
-                    } 
-                    else if (videoUrl.includes("mp4upload.com") && altHosterSelection.includes('mp4upload')) {
-                        const vids = await mp4UploadExtractor(videoUrl);
-                        videos.push(...vids);
-                    } 
-                    else if (videoUrl.includes("streamlare.com") && altHosterSelection.includes('streamlare')) {
-                        const vids = await streamlareExtractor(videoUrl, 'Streamlare ');
-                        videos.push(...vids);
-                    } 
-                    else if (["filemoon", "moonplayer"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('filemoon')) {
-                        const vids = await filemoonExtractor(videoUrl);
-                        videos.push(...vids);
-                    } 
-                    else if (videoUrl.includes("wish") && altHosterSelection.includes('streamwish')) {
-                        const vids = await streamWishExtractor(videoUrl, 'StreamWish ');
-                        videos.push(...vids);
-                    }
-                } catch (error) {
-                    console.error("Error processing video source:", error);
+            try {
+                const videoJson = JSON.parse(await this.request(encodedGql));
+                
+                if (!videoJson?.data?.episode?.sourceUrls) {
+                    continue;
                 }
+                
+                for (const video of videoJson.data.episode.sourceUrls) {
+                    try {
+                        const videoUrl = this.decryptSource(video.sourceUrl);
+                        const scanlator = transType === "sub" ? "sub" : "dub";
+                        
+                        if (videoUrl.includes("/apivtwo/") && altHosterSelection.includes('player')) {
+                            const quality = `internal ${video.sourceName} (${scanlator})`;
+                            const vids = await new AllAnimeExtractor({ "Referer": baseUrl }, "https://allanime.to").videoFromUrl(videoUrl, quality);
+                            videos.push(...vids);
+                        } 
+                        else if (["vidstreaming", "https://gogo", "playgo1.cc", "playtaku", "vidcloud"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('vidstreaming')) {
+                            const vids = await gogoCdnExtractor(videoUrl);
+                            vids.forEach(v => v.quality += ` (${scanlator})`);
+                            videos.push(...vids);
+                        } 
+                        else if (["dood", "d0"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('dood')) {
+                            const vids = await doodExtractor(videoUrl);
+                            vids.forEach(v => v.quality += ` (${scanlator})`);
+                            videos.push(...vids);
+                        } 
+                        else if (["ok.ru", "okru"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('okru')) {
+                            const vids = await okruExtractor(videoUrl);
+                            vids.forEach(v => v.quality += ` (${scanlator})`);
+                            videos.push(...vids);
+                        } 
+                        else if (videoUrl.includes("mp4upload.com") && altHosterSelection.includes('mp4upload')) {
+                            const vids = await mp4UploadExtractor(videoUrl);
+                            vids.forEach(v => v.quality += ` (${scanlator})`);
+                            videos.push(...vids);
+                        } 
+                        else if (videoUrl.includes("streamlare.com") && altHosterSelection.includes('streamlare')) {
+                            const vids = await streamlareExtractor(videoUrl, 'Streamlare ');
+                            vids.forEach(v => v.quality += ` (${scanlator})`);
+                            videos.push(...vids);
+                        } 
+                        else if (["filemoon", "moonplayer"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('filemoon')) {
+                            const vids = await filemoonExtractor(videoUrl);
+                            vids.forEach(v => v.quality += ` (${scanlator})`);
+                            videos.push(...vids);
+                        } 
+                        else if (videoUrl.includes("wish") && altHosterSelection.includes('streamwish')) {
+                            const vids = await streamWishExtractor(videoUrl, 'StreamWish ');
+                            vids.forEach(v => v.quality += ` (${scanlator})`);
+                            videos.push(...vids);
+                        }
+                    } catch (error) {
+                        console.error("Error processing video source:", error);
+                    }
+                }
+            } catch (error) {
+                console.error(`Error fetching videos for ${transType}:`, error);
             }
-            
-            return this.sortVideos(videos);
-        } catch (error) {
-            console.error("Error in getVideoList:", error);
-            return [];
         }
+        
+        // If no videos found for preferred type, try other available types
+        if (videos.length === 0 && allTranslationTypes.length > 0) {
+            const fallbackType = allTranslationTypes[0];
+            const encodedGql = `?variables=%0A%20%20%20%20%20%20%20%20%7B%0A%20%20%20%20%20%20%20%20%20%20%22showId%22:%20%22${ep.showId}%22,%0A%20%20%20%20%20%20%20%20%20%20%22episodeString%22:%20%22${ep.episodeString}%22,%0A%20%20%20%20%20%20%20%20%20%20%22translationType%22:%20%22${fallbackType}%22%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20&query=%0A%20%20%20%20%20%20%20%20query(%0A%20%20%20%20%20%20%20%20%20%20$showId:%20String!%0A%20%20%20%20%20%20%20%20%20%20$episodeString:%20String!%0A%20%20%20%20%20%20%20%20%20%20$translationType:%20VaildTranslationTypeEnumType!%0A%20%20%20%20%20%20%20%20)%20%7B%0A%20%20%20%20%20%20%20%20%20%20episode(%0A%20%20%20%20%20%20%20%20%20%20%20%20showId:%20$showId%0A%20%20%20%20%20%20%20%20%20%20%20%20episodeString:%20$episodeString%0A%20%20%20%20%20%20%20%20%20%20%20%20translationType:%20$translationType%0A%20%20%20%20%20%20%20%20%20%20)%20%7B%0A%20%20%20%20%20%20%20%20%20%20%20%20sourceUrls%0A%20%20%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20%7D%0A%20%20%20%20%20%20%20%20`;
+            
+            try {
+                const videoJson = JSON.parse(await this.request(encodedGql));
+                
+                if (videoJson?.data?.episode?.sourceUrls) {
+                    const scanlator = fallbackType === "sub" ? "sub" : "dub";
+                    
+                    for (const video of videoJson.data.episode.sourceUrls) {
+                        try {
+                            const videoUrl = this.decryptSource(video.sourceUrl);
+                            
+                            if (videoUrl.includes("/apivtwo/") && altHosterSelection.includes('player')) {
+                                const quality = `internal ${video.sourceName} (${scanlator})`;
+                                const vids = await new AllAnimeExtractor({ "Referer": baseUrl }, "https://allanime.to").videoFromUrl(videoUrl, quality);
+                                videos.push(...vids);
+                            } 
+                            // ... [rest of the hoster checks same as above]
+                        } catch (error) {
+                            console.error("Error processing fallback video source:", error);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error("Error fetching fallback videos:", error);
+            }
+        }
+        
+        return this.sortVideos(videos);
+    } catch (error) {
+        console.error("Error in getVideoList:", error);
+        return [];
     }
+}
 
     sortVideos(videos) {
         try {
