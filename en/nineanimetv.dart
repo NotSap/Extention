@@ -2,16 +2,13 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:mangayomi/bridge_lib.dart';
 
-// Define fetchText function outside any class
 Future<String> fetchText(String url, {Map<String, String>? headers}) async {
   final client = HttpClient();
   final request = await client.getUrl(Uri.parse(url));
 
-  // Manually set headers using set
+  // Set headers using addAll method
   if (headers != null) {
-    for (var entry in headers.entries) {
-      request.headers.set(entry.key, entry.value);
-    }
+    request.headers.addAll(headers);
   }
 
   final response = await request.close();
@@ -22,8 +19,6 @@ Future<String> fetchText(String url, {Map<String, String>? headers}) async {
     throw Exception('Failed to load data');
   }
 }
-
-
 
 class NineAnimeTv extends MProvider {
   NineAnimeTv({required this.source});
