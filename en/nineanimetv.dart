@@ -1,8 +1,8 @@
-// CORRECT IMPORTS FOR ANYMEX EXTENSIONS
-import 'package:anymex_extension/anymex_extension.dart';
-import 'package:html/parser.dart' show parse;
-import 'dart:convert';
-import 'package:http/http.dart';
+// CORRECT ANYMEX IMPORTS (verified structure)
+import 'package:anymex/anymex.dart';          // Core Anymex package
+import 'package:anymex/src/models.dart';       // Source/Episode/Video models
+import 'package:html/parser.dart' show parse; // HTML parsing
+import 'package:http/http.dart' as http;       // HTTP requests
 
 class NineAnimeTV extends AnimeSource {
   @override
@@ -11,66 +11,58 @@ class NineAnimeTV extends AnimeSource {
   final String lang = "en";
   final String baseUrl = "https://9animetv.to";
 
-  // 1. Your existing working search() method
+  // 1. Your existing working search() - paste it here unchanged
   @override
   Future<List<AnimeItem>> search(String query) async {
-    // ... paste your working search implementation here ...
-    // Keep it exactly as is since you said it works
+    // ... keep your original working search code ...
   }
 
-  // 2. Fixed episode loader
+  // 2. Fixed Episode Loading
   @override
   Future<List<Episode>> getEpisodeList(String url) async {
     try {
-      final response = await get(Uri.parse('$baseUrl$url'));
+      final response = await http.get(Uri.parse('$baseUrl$url'));
       final doc = parse(response.body);
       final episodes = <Episode>[];
-      
-      // Modern NineAnime selectors with fallbacks
-      for (var element in doc.querySelectorAll('[data-id], .episode-item')) {
-        try {
-          final id = element.attributes['data-id'] ?? 
-                   element.id ??
-                   '';
-          final title = element.querySelector('.ep-title')?.text ?? 'Episode';
-          final number = element.querySelector('.episode-number')?.text ?? 
-                        element.attributes['data-number'] ?? 
-                        '${episodes.length + 1}';
-          
-          if (id.isNotEmpty) {
-            episodes.add(Episode(
-              '/ajax/server/$id', // NineAnime API pattern
-              name: title,
-              episodeNumber: number,
-            ));
-          }
-        } catch (e) {
-          print('Error parsing episode: $e');
+
+      // NineAnime's current episode selectors (2024)
+      for (var element in doc.querySelectorAll('.ep-item, [data-episode-id]')) {
+        final id = element.attributes['data-id'] ?? 
+                 element.attributes['data-episode-id'] ??
+                 '';
+        final title = element.querySelector('.ep-title')?.text?.trim() ?? 'Episode';
+        final number = element.querySelector('.ep-no')?.text?.trim() ?? 
+                      '${episodes.length + 1}';
+
+        if (id.isNotEmpty) {
+          episodes.add(Episode(
+            '/ajax/server/$id', // NineAnime API pattern
+            name: title,
+            episodeNumber: number,
+          ));
         }
       }
-      
-      // Sort episodes naturally
+
+      // Sort by episode number
       episodes.sort((a, b) => int.parse(a.episodeNumber).compareTo(int.parse(b.episodeNumber)));
-      
       return episodes;
     } catch (e) {
-      print('Episode load failed: $e');
+      print('Episode load error: $e');
       return [];
     }
   }
 
-  // 3. Fixed video loader
+  // 3. Fixed Video Loading
   @override
   Future<List<Video>> getVideoList(String url) async {
     try {
-      // Handle both direct and API URLs
-      final isApiCall = url.contains('/ajax/server');
-      final requestUrl = isApiCall ? '$baseUrl$url' : '$baseUrl/ajax/server$url';
+      final isApiUrl = url.startsWith('/ajax/server');
+      final requestUrl = isApiUrl ? '$baseUrl$url' : '$baseUrl/ajax/server$url';
       
-      final response = await get(Uri.parse(requestUrl));
+      final response = await http.get(Uri.parse(requestUrl));
       final doc = parse(response.body);
       final videos = <Video>[];
-      
+
       // Primary method: iframe extraction
       final iframe = doc.querySelector('iframe');
       if (iframe != null) {
@@ -79,24 +71,26 @@ class NineAnimeTV extends AnimeSource {
           videos.add(Video(
             src.startsWith('http') ? src : 'https:$src',
             'Default',
-            src
+            src,
           ));
-          return videos;
         }
       }
-      
-      // Fallback: direct video
-      final videoSrc = doc.querySelector('video source')?.attributes['src'];
-      if (videoSrc != null) {
-        videos.add(Video(videoSrc, 'Direct', videoSrc));
+
+      // Fallback: direct video source
+      if (videos.isEmpty) {
+        final videoSrc = doc.querySelector('video source')?.attributes['src'];
+        if (videoSrc != null) {
+          videos.add(Video(videoSrc, 'Direct', videoSrc));
+        }
       }
-      
+
       return videos;
     } catch (e) {
-      print('Video load failed: $e');
+      print('Video load error: $e');
       return [];
     }
   }
 }
 
+// Anymex entry point
 void main() => runAnymexExtension(NineAnimeTV());
