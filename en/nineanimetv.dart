@@ -173,40 +173,55 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<List<MVideo>> getVideoList(String url) async {
-    final res =
-        (await client.get(
-          Uri.parse("${source.baseUrl}/ajax/episode/servers?episodeId=$url"),
-        )).body;
+    try {
+      final res = (await client.get(
+        Uri.parse("${source.baseUrl}/ajax/episode/servers?episodeId=$url"),
+        headers: {'Referer': source.baseUrl},
+      )).body;
 
-    final html = json.decode(res)["html"];
+      final html = json.decode(res)["html"];
+      final serverElements = parseHtml(html).select("div.server-item");
 
-    final serverElements = parseHtml(html).select("div.server-item");
+      List<MVideo> videos = [];
+      final hosterSelection = preferenceHosterSelection(source.id);
+      final typeSelection = preferenceTypeSelection(source.id);
 
-    List<MVideo> videos = [];
-    final hosterSelection = preferenceHosterSelection(source.id);
-    final typeSelection = preferenceTypeSelection(source.id);
-    for (var serverElement in serverElements) {
-      final name = serverElement.text;
-      final id = serverElement.attr("data-id");
-      final subDub = serverElement.attr("data-type");
-      final res =
-          (await client.get(
-            Uri.parse("${source.baseUrl}/ajax/episode/sources?id=$id"),
-          )).body;
-      final epUrl = json.decode(res)["link"];
-      List<MVideo> a = [];
+      for (var serverElement in serverElements) {
+        final name = serverElement.text.trim();
+        final id = serverElement.attr("data-id");
+        final subDub = serverElement.attr("data-type");
 
-      if (hosterSelection.contains(name) && typeSelection.contains(subDub)) {
-        if (name.contains("Vidstreaming")) {
-          a = await rapidCloudExtractor(epUrl, "Vidstreaming - $subDub");
-        } else if (name.contains("Vidcloud")) {
-          a = await rapidCloudExtractor(epUrl, "Vidcloud - $subDub");
+        if (id.isEmpty || 
+            !hosterSelection.any((h) => name.contains(h)) || 
+            !typeSelection.contains(subDub)) {
+          continue;
         }
-        videos.addAll(a);
-      }
-    }
 
-    return sortVideos(videos, source.id);
+        try {
+          final sourceRes = (await client.get(
+            Uri.parse("${source.baseUrl}/ajax/episode/sources?id=$id"),
+            headers: {
+              'Referer': source.baseUrl,
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+          )).body;
+
+          final epUrl = json.decode(sourceRes)["link"];
+          if (epUrl == null || epUrl.isEmpty) continue;
+
+          if (name.contains("Vidstreaming") || name.contains("Vidcloud")) {
+            videos.addAll(await rapidCloudExtractor(epUrl, "$name - $subDub"));
+          }
+        } catch (e) {
+          print('Error processing server $name: $e');
+        }
+      }
+
+      return sortVideos(videos, source.id);
+    } catch (e) {
+      print('Video list error: $e');
+      return [];
+    }
   }
 
   MPages parseAnimeList(String res) {
