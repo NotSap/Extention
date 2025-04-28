@@ -10,21 +10,19 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<MPages> getPopular(int page) async {
-    final res =
-        (await client.get(
-          Uri.parse("${source.baseUrl}/filter?sort=all&page=$page"),
-        )).body;
+    final res = (await client.get(
+      Uri.parse("${source.baseUrl}/filter?sort=all&page=$page"),
+    )).body;
     return parseAnimeList(res);
   }
 
   @override
   Future<MPages> getLatestUpdates(int page) async {
-    final res =
-        (await client.get(
-          Uri.parse(
-            "${source.baseUrl}/filter?sort=recently_updated&page=$page",
-          ),
-        )).body;
+    final res = (await client.get(
+      Uri.parse(
+        "${source.baseUrl}/filter?sort=recently_updated&page=$page",
+      ),
+    )).body;
     return parseAnimeList(res);
   }
 
@@ -127,16 +125,14 @@ class NineAnimeTv extends MProvider {
     MManga anime = MManga();
     final document = parseHtml(res);
     final infoElement = document.selectFirst("div.film-infor");
-    final status =
-        infoElement.xpathFirst(
+    final status = infoElement.xpathFirst(
           '//div[contains(text(),"Status:")]/following-sibling::div/span/text()',
         ) ??
         "";
     anime.status = parseStatus(status, statusList);
     anime.description =
         infoElement.selectFirst("div.film-description > p")?.text ?? "";
-    anime.author =
-        infoElement.xpathFirst(
+    anime.author = infoElement.xpathFirst(
           '//div[contains(text(),"Studios:")]/following-sibling::div/a/text()',
         ) ??
         "";
@@ -146,10 +142,9 @@ class NineAnimeTv extends MProvider {
     );
     final id = parseHtml(res).selectFirst("div[data-id]").attr("data-id");
 
-    final resEp =
-        (await client.get(
-          Uri.parse("${source.baseUrl}/ajax/episode/list/$id"),
-        )).body;
+    final resEp = (await client.get(
+      Uri.parse("${source.baseUrl}/ajax/episode/list/$id"),
+    )).body;
     final html = json.decode(resEp)["html"];
 
     List<MChapter>? episodesList = [];
@@ -157,9 +152,7 @@ class NineAnimeTv extends MProvider {
     final epsElements = parseHtml(html).select("a");
     for (var epElement in epsElements) {
       final id = epElement.attr('data-id');
-
       final title = epElement.attr('title') ?? "";
-
       final epNum = epElement.attr('data-number');
 
       MChapter episode = MChapter();
@@ -173,40 +166,178 @@ class NineAnimeTv extends MProvider {
 
   @override
   Future<List<MVideo>> getVideoList(String url) async {
-    final res =
-        (await client.get(
-          Uri.parse("${source.baseUrl}/ajax/episode/servers?episodeId=$url"),
-        )).body;
+    try {
+      final res = await client.get(
+        Uri.parse("${source.baseUrl}/ajax/episode/servers?episodeId=$url"),
+      );
 
-    final html = json.decode(res)["html"];
-
-    final serverElements = parseHtml(html).select("div.server-item");
-
-    List<MVideo> videos = [];
-    final hosterSelection = preferenceHosterSelection(source.id);
-    final typeSelection = preferenceTypeSelection(source.id);
-    for (var serverElement in serverElements) {
-      final name = serverElement.text;
-      final id = serverElement.attr("data-id");
-      final subDub = serverElement.attr("data-type");
-      final res =
-          (await client.get(
-            Uri.parse("${source.baseUrl}/ajax/episode/sources?id=$id"),
-          )).body;
-      final epUrl = json.decode(res)["link"];
-      List<MVideo> a = [];
-
-      if (hosterSelection.contains(name) && typeSelection.contains(subDub)) {
-        if (name.contains("Vidstreaming")) {
-          a = await rapidCloudExtractor(epUrl, "Vidstreaming - $subDub");
-        } else if (name.contains("Vidcloud")) {
-          a = await rapidCloudExtractor(epUrl, "Vidcloud - $subDub");
-        }
-        videos.addAll(a);
+      if (res.statusCode != 200) {
+        throw Exception("Failed to fetch servers: ${res.statusCode}");
       }
-    }
 
-    return sortVideos(videos, source.id);
+      final jsonData = json.decode(res.body);
+      if (jsonData["html"] == null) {
+        throw Exception("No servers found in response");
+      }
+
+      final html = jsonData["html"];
+      final serverElements = parseHtml(html).select("div.server-item");
+
+      List<MVideo> videos = [];
+      final hosterSelection = preferenceHosterSelection(source.id);
+      final typeSelection = preferenceTypeSelection(source.id);
+
+      for (var serverElement in serverElements) {
+        final name = serverElement.text.trim();
+        final id = serverElement.attr("data-id");
+        final subDub = serverElement.attr("data-type");
+
+        if (!hosterSelection.any((h) => name.contains(h)) || 
+            !typeSelection.contains(subDub)) {
+          continue;
+        }
+
+        final sourceRes = await client.get(
+          Uri.parse("${source.baseUrl}/ajax/episode/sources?id=$id"),
+        );
+
+        if (sourceRes.statusCode != 200) {
+          continue;
+        }
+
+        final sourceJson = json.decode(sourceRes.body);
+        if (sourceJson["link"] == null) {
+          continue;
+        }
+
+        final epUrl = sourceJson["link"];
+        List<MVideo> extractedVideos = [];
+
+        if (name.contains("Vidstreaming") || name.contains("Vidcloud")) {
+          try {
+            extractedVideos = await rapidCloudExtractor(epUrl, "$name - $subDub");
+            videos.addAll(extractedVideos);
+          } catch (e) {
+            print("Failed to extract from $name: $e");
+          }
+        }
+      }
+
+      return sortVideos(videos, source.id);
+    } catch (e) {
+      print("Error in getVideoList: $e");
+      return [];
+    }
+  }
+
+  Future<List<MVideo>> rapidCloudExtractor(String url, String name) async {
+    try {
+      final serverUrl = ['https://megacloud.tv', 'https://rapid-cloud.co'];
+      final serverType = url.contains('megacloud') ? 0 : 1;
+      
+      final sourceUrl = [
+        '/embed-2/ajax/e-1/getSources?id=',
+        '/ajax/embed-6-v2/getSources?id=',
+      ];
+      final sourceSpliter = ['/e-1/', '/embed-6-v2/'];
+      
+      final id = url.split(sourceSpliter[serverType]).last.split('?').first;
+      final res = await client.get(
+        Uri.parse('${serverUrl[serverType]}${sourceUrl[serverType]}$id'),
+        headers: {"X-Requested-With": "XMLHttpRequest"},
+      );
+
+      if (res.statusCode != 200) {
+        throw Exception("Failed to fetch sources: ${res.statusCode}");
+      }
+
+      final jsonData = json.decode(res.body);
+      final encrypted = getMapValue(jsonData, "encrypted");
+      String videoResJson = "";
+      List<MVideo> videos = [];
+      
+      if (encrypted == "true") {
+        final ciphered = getMapValue(jsonData, "sources");
+        List<List<int>> indexPairs = await generateIndexPairs(serverType);
+        var password = '';
+        String ciphertext = ciphered;
+        int index = 0;
+        for (List<int> item in json.decode(json.encode(indexPairs))) {
+          int start = item.first + index;
+          int end = start + item.last;
+          String passSubstr = ciphered.substring(start, end);
+          password += passSubstr;
+          ciphertext = ciphertext.replaceFirst(passSubstr, "");
+          index += item.last;
+        }
+        videoResJson = decryptAESCryptoJS(ciphertext, password);
+      } else {
+        videoResJson = json.encode(
+          (jsonData["sources"] as List<Map<String, dynamic>>),
+        );
+      }
+
+      String masterUrl =
+          ((json.decode(videoResJson) as List<Map<String, dynamic>>)
+              .first)['file'];
+      String type =
+          ((json.decode(videoResJson) as List<Map<String, dynamic>>)
+              .first)['type'];
+
+      final tracks = (jsonData['tracks'] as List)
+          .where((e) => e['kind'] == 'captions' ? true : false)
+          .toList();
+      List<MTrack> subtitles = [];
+
+      for (var sub in tracks) {
+        try {
+          MTrack subtitle = MTrack();
+          subtitle
+            ..label = sub["label"]
+            ..file = sub["file"];
+          subtitles.add(subtitle);
+        } catch (_) {}
+      }
+
+      if (type == "hls") {
+        final masterPlaylistRes = (await client.get(Uri.parse(masterUrl))).body;
+
+        for (var it in substringAfter(
+          masterPlaylistRes,
+          "#EXT-X-STREAM-INF:",
+        ).split("#EXT-X-STREAM-INF:")) {
+          final quality =
+              "${substringBefore(substringBefore(substringAfter(substringAfter(it, "RESOLUTION="), "x"), ","), "\n")}p";
+
+          String videoUrl = substringBefore(substringAfter(it, "\n"), "\n");
+
+          if (!videoUrl.startsWith("http")) {
+            videoUrl =
+                "${masterUrl.split("/").sublist(0, masterUrl.split("/").length - 1).join("/")}/$videoUrl";
+          }
+
+          MVideo video = MVideo();
+          video
+            ..url = videoUrl
+            ..originalUrl = videoUrl
+            ..quality = "$name - $quality"
+            ..subtitles = subtitles;
+          videos.add(video);
+        }
+      } else {
+        MVideo video = MVideo();
+        video
+          ..url = masterUrl
+          ..originalUrl = masterUrl
+          ..quality = "$name - Default"
+          ..subtitles = subtitles;
+        videos.add(video);
+      }
+      return videos;
+    } catch (e) {
+      print("Error in rapidCloudExtractor: $e");
+      return [];
+    }
   }
 
   MPages parseAnimeList(String res) {
@@ -223,141 +354,43 @@ class NineAnimeTv extends MProvider {
     return MPages(animeList, true);
   }
 
-  Future<List<MVideo>> rapidCloudExtractor(String url, String name) async {
-    final serverUrl = ['https://megacloud.tv', 'https://rapid-cloud.co'];
-
-    final serverType =
-        url.startsWith('https://megacloud.tv') ||
-                url.startsWith('https://megacloud.club')
-            ? 0
-            : 1;
-    final sourceUrl = [
-      '/embed-2/ajax/e-1/getSources?id=',
-      '/ajax/embed-6-v2/getSources?id=',
-    ];
-    final sourceSpliter = ['/e-1/', '/embed-6-v2/'];
-    final id = url.split(sourceSpliter[serverType]).last.split('?').first;
-    final resServer =
-        (await client.get(
-          Uri.parse('${serverUrl[serverType]}${sourceUrl[serverType]}$id'),
-          headers: {"X-Requested-With": "XMLHttpRequest"},
-        )).body;
-    final encrypted = getMapValue(resServer, "encrypted");
-    String videoResJson = "";
-    List<MVideo> videos = [];
-    if (encrypted == "true") {
-      final ciphered = getMapValue(resServer, "sources");
-      List<List<int>> indexPairs = await generateIndexPairs(serverType);
-      var password = '';
-      String ciphertext = ciphered;
-      int index = 0;
-      for (List<int> item in json.decode(json.encode(indexPairs))) {
-        int start = item.first + index;
-        int end = start + item.last;
-        String passSubstr = ciphered.substring(start, end);
-        password += passSubstr;
-        ciphertext = ciphertext.replaceFirst(passSubstr, "");
-        index += item.last;
-      }
-      videoResJson = decryptAESCryptoJS(ciphertext, password);
-    } else {
-      videoResJson = json.encode(
-        (json.decode(resServer)["sources"] as List<Map<String, dynamic>>),
-      );
-    }
-
-    String masterUrl =
-        ((json.decode(videoResJson) as List<Map<String, dynamic>>)
-            .first)['file'];
-    String type =
-        ((json.decode(videoResJson) as List<Map<String, dynamic>>)
-            .first)['type'];
-
-    final tracks =
-        (json.decode(resServer)['tracks'] as List)
-            .where((e) => e['kind'] == 'captions' ? true : false)
-            .toList();
-    List<MTrack> subtitles = [];
-
-    for (var sub in tracks) {
-      try {
-        MTrack subtitle = MTrack();
-        subtitle
-          ..label = sub["label"]
-          ..file = sub["file"];
-        subtitles.add(subtitle);
-      } catch (_) {}
-    }
-
-    if (type == "hls") {
-      final masterPlaylistRes = (await client.get(Uri.parse(masterUrl))).body;
-
-      for (var it in substringAfter(
-        masterPlaylistRes,
-        "#EXT-X-STREAM-INF:",
-      ).split("#EXT-X-STREAM-INF:")) {
-        final quality =
-            "${substringBefore(substringBefore(substringAfter(substringAfter(it, "RESOLUTION="), "x"), ","), "\n")}p";
-
-        String videoUrl = substringBefore(substringAfter(it, "\n"), "\n");
-
-        if (!videoUrl.startsWith("http")) {
-          videoUrl =
-              "${masterUrl.split("/").sublist(0, masterUrl.split("/").length - 1).join("/")}/$videoUrl";
-        }
-
-        MVideo video = MVideo();
-        video
-          ..url = videoUrl
-          ..originalUrl = videoUrl
-          ..quality = "$name - $quality"
-          ..subtitles = subtitles;
-        videos.add(video);
-      }
-    } else {
-      MVideo video = MVideo();
-      video
-        ..url = masterUrl
-        ..originalUrl = masterUrl
-        ..quality = "$name - Default"
-        ..subtitles = subtitles;
-      videos.add(video);
-    }
-    return videos;
-  }
-
   Future<List<List<int>>> generateIndexPairs(int serverType) async {
-    final jsPlayerUrl = [
-      "https://megacloud.tv/js/player/a/prod/e1-player.min.js",
-      "https://rapid-cloud.co/js/player/prod/e6-player-v2.min.js",
-    ];
-    final scriptText =
-        (await client.get(Uri.parse(jsPlayerUrl[serverType]))).body;
+    try {
+      final jsPlayerUrl = [
+        "https://megacloud.tv/js/player/a/prod/e1-player.min.js",
+        "https://rapid-cloud.co/js/player/prod/e6-player-v2.min.js",
+      ];
+      final scriptText =
+          (await client.get(Uri.parse(jsPlayerUrl[serverType]))).body;
 
-    final switchCode = scriptText.substring(
-      scriptText.lastIndexOf('switch'),
-      scriptText.indexOf('=partKey'),
-    );
-
-    List<int> indexes = [];
-    for (var variableMatch
-        in RegExp(r'=(\w+)').allMatches(switchCode).toList()) {
-      final regex = RegExp(
-        ',${(variableMatch as RegExpMatch).group(1)}=((?:0x)?([0-9a-fA-F]+))',
+      final switchCode = scriptText.substring(
+        scriptText.lastIndexOf('switch'),
+        scriptText.indexOf('=partKey'),
       );
-      Match? match = regex.firstMatch(scriptText);
 
-      if (match != null) {
-        String value = match.group(1);
-        if (value.contains("0x")) {
-          indexes.add(int.parse(substringAfter(value, "0x"), radix: 16));
-        } else {
-          indexes.add(int.parse(value));
+      List<int> indexes = [];
+      for (var variableMatch
+          in RegExp(r'=(\w+)').allMatches(switchCode).toList()) {
+        final regex = RegExp(
+          ',${(variableMatch as RegExpMatch).group(1)}=((?:0x)?([0-9a-fA-F]+))',
+        );
+        Match? match = regex.firstMatch(scriptText);
+
+        if (match != null) {
+          String value = match.group(1);
+          if (value.contains("0x")) {
+            indexes.add(int.parse(substringAfter(value, "0x"), radix: 16));
+          } else {
+            indexes.add(int.parse(value));
+          }
         }
       }
-    }
 
-    return chunked(indexes, 2);
+      return chunked(indexes, 2);
+    } catch (e) {
+      print("Error in generateIndexPairs: $e");
+      return [];
+    }
   }
 
   List<List<int>> chunked(List<int> list, int size) {
