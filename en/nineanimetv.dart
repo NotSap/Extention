@@ -194,7 +194,7 @@ class NineAnimeTv extends MProvider {
 
         if (!hosterSelection.any((h) => name.contains(h)) || 
             !typeSelection.contains(subDub)) {
-          continue;
+          continue; // This is the valid continue statement inside a loop
         }
 
         final sourceRes = await client.get(
@@ -202,12 +202,12 @@ class NineAnimeTv extends MProvider {
         );
 
         if (sourceRes.statusCode != 200) {
-          continue;
+          continue; // This is the valid continue statement inside a loop
         }
 
         final sourceJson = json.decode(sourceRes.body);
         if (sourceJson["link"] == null) {
-          continue;
+          continue; // This is the valid continue statement inside a loop
         }
 
         final epUrl = sourceJson["link"];
