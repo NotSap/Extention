@@ -166,46 +166,80 @@ class DefaultExtension extends MProvider {
             const preferences = new SharedPreferences();
             const subPref = preferences.get("preferred_sub") || "sub";
             const ep = JSON.parse(url);
-            const altHosterSelection = preferences.get('alt_hoster_selection1') || [];
             
+            // Get all available translation types
             const allTranslationTypes = Array.isArray(ep.translationType) ? 
                 [...new Set(ep.translationType)] : 
                 (ep.translationType ? [ep.translationType] : ["sub"]);
 
-            // Try all types but prefer user's preferred type first
-            const typesToTry = [...allTranslationTypes].sort((a, b) => 
-                a === subPref ? -1 : b === subPref ? 1 : 0);
-
-            const videos = [];
-            for (const transType of typesToTry) {
-                const typeVideos = await this.fetchVideosForType(
-                    ep.showId,
-                    ep.episodeString,
-                    transType,
-                    baseUrl,
-                    altHosterSelection
-                );
-                typeVideos.forEach(video => {
-                    if (!videos.some(v => v.url === video.url && v.quality === video.quality)) {
-                        videos.push(video);
-                    }
-                });
+            // Special handling for One Piece
+            const isOnePiece = ep.showId.includes("one-piece") || 
+                              ep.showId.includes("One_Piece") || 
+                              ep.showId.includes("one_piece");
+            
+            // If One Piece and user prefers dub, prioritize checking dub first
+            if (isOnePiece && subPref === "dub" && allTranslationTypes.includes("dub")) {
+                allTranslationTypes.sort((a, b) => a === "dub" ? -1 : b === "dub" ? 1 : 0);
             }
 
-            // Final fallback if no videos found
-            if (videos.length === 0 && !allTranslationTypes.includes("sub")) {
-                const defaultVideos = await this.fetchVideosForType(
-                    ep.showId,
-                    ep.episodeString,
-                    "sub",
-                    baseUrl,
-                    altHosterSelection
-                );
-                defaultVideos.forEach(video => {
-                    if (!videos.some(v => v.url === video.url && v.quality === video.quality)) {
-                        videos.push(video);
-                    }
-                });
+            const videos = [];
+            // Remove mp4upload from hoster selection since it's unreliable
+            const altHosterSelection = (preferences.get('alt_hoster_selection1') || [])
+                .filter(h => h !== "mp4upload");
+
+            // Process all available types
+            for (const transType of allTranslationTypes) {
+                try {
+                    const typeVideos = await this.fetchVideosForType(
+                        ep.showId,
+                        ep.episodeString,
+                        transType,
+                        baseUrl,
+                        altHosterSelection,
+                        isOnePiece
+                    );
+                    
+                    // Deduplicate while adding
+                    typeVideos.forEach(newVid => {
+                        if (!videos.some(existingVid => 
+                            existingVid.url === newVid.url && 
+                            existingVid.quality === newVid.quality
+                        )) {
+                            videos.push(newVid);
+                        }
+                    });
+                } catch (error) {
+                    console.error(`Error fetching ${transType} videos:`, error);
+                }
+            }
+
+            // Special fallback for One Piece if no videos found
+            if (videos.length === 0 && isOnePiece) {
+                // Try forcing dub even if not originally listed
+                if (!allTranslationTypes.includes("dub")) {
+                    const dubVideos = await this.fetchVideosForType(
+                        ep.showId,
+                        ep.episodeString,
+                        "dub",
+                        baseUrl,
+                        altHosterSelection,
+                        true
+                    );
+                    videos.push(...dubVideos);
+                }
+                
+                // If still no videos, try sub as last resort
+                if (videos.length === 0 && !allTranslationTypes.includes("sub")) {
+                    const subVideos = await this.fetchVideosForType(
+                        ep.showId,
+                        ep.episodeString,
+                        "sub",
+                        baseUrl,
+                        altHosterSelection,
+                        true
+                    );
+                    videos.push(...subVideos);
+                }
             }
 
             return this.sortVideos(videos);
@@ -215,106 +249,82 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    async fetchVideosForType(showId, episodeString, transType, baseUrl, altHosterSelection) {
+    async fetchVideosForType(showId, episodeString, transType, baseUrl, altHosterSelection, isOnePiece = false) {
         const videos = [];
         const scanlator = transType === "sub" ? "sub" : "dub";
         
         try {
             const encodedGql = `?variables=%7B%22showId%22:%22${showId}%22,%22episodeString%22:%22${episodeString}%22,%22translationType%22:%22${transType}%22%7D&query=query($showId:String!,$episodeString:String!,$translationType:VaildTranslationTypeEnumType!){episode(showId:$showId,episodeString:$episodeString,translationType:$translationType){sourceUrls}}`;
-            const sourceUrls = JSON.parse(await this.request(encodedGql)).data?.episode?.sourceUrls || [];
+            const response = await this.request(encodedGql);
+            const videoJson = JSON.parse(response);
 
-            await Promise.all(sourceUrls.map(async (video) => {
+            if (!videoJson?.data?.episode?.sourceUrls) {
+                console.log(`No sourceUrls found for ${scanlator}`);
+                return videos;
+            }
+
+            // Special handling for One Piece dub
+            if (isOnePiece && transType === "dub" && videoJson.data.episode.sourceUrls.length === 0) {
+                console.log("No dub sources found, trying alternative method for One Piece");
+                // Here you could add alternative API calls or special handling for One Piece dub
+            }
+
+            await Promise.all(videoJson.data.episode.sourceUrls.map(async (video) => {
                 try {
                     if (!video.sourceUrl) return;
                     
                     const videoUrl = this.decryptSource(video.sourceUrl);
                     if (!videoUrl) return;
 
-                    const newVideos = await this.processVideoSource(
-                        videoUrl,
-                        video.sourceName,
-                        scanlator,
-                        baseUrl,
-                        altHosterSelection
-                    );
-                    
-                    newVideos.forEach(v => {
-                        if (!videos.some(existing => existing.url === v.url && existing.quality === v.quality)) {
-                            videos.push(v);
-                        }
-                    });
+                    // Process internal player
+                    if (videoUrl.includes("/apivtwo/") && altHosterSelection.includes('player')) {
+                        const quality = `internal ${video.sourceName} (${scanlator})`;
+                        const vids = await new AllAnimeExtractor({ "Referer": baseUrl }, "https://allanime.to").videoFromUrl(videoUrl, quality);
+                        videos.push(...vids);
+                    }
+                    // Process vidstreaming
+                    else if (["vidstreaming", "https://gogo", "playgo1.cc", "playtaku", "vidcloud"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('vidstreaming')) {
+                        const vids = await gogoCdnExtractor(videoUrl);
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
+                    // Process doodstream
+                    else if (["dood", "d0"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('dood')) {
+                        const vids = await doodExtractor(videoUrl);
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
+                    // Process okru
+                    else if (["ok.ru", "okru"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('okru')) {
+                        const vids = await okruExtractor(videoUrl);
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
+                    // Process streamlare
+                    else if (videoUrl.includes("streamlare.com") && altHosterSelection.includes('streamlare')) {
+                        const vids = await streamlareExtractor(videoUrl, 'Streamlare ');
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
+                    // Process filemoon
+                    else if (["filemoon", "moonplayer"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('filemoon')) {
+                        const vids = await filemoonExtractor(videoUrl);
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
+                    // Process streamwish
+                    else if (videoUrl.includes("wish") && altHosterSelection.includes('streamwish')) {
+                        const vids = await streamWishExtractor(videoUrl, 'StreamWish ');
+                        vids.forEach(v => v.quality += ` (${scanlator})`);
+                        videos.push(...vids);
+                    }
                 } catch (error) {
-                    console.error(`Error processing ${scanlator} source:`, error);
+                    console.error(`Error processing ${scanlator} video source:`, error);
                 }
             }));
+
         } catch (error) {
             console.error(`Error fetching ${scanlator} videos:`, error);
-        }
-        
-        return videos;
-    }
-
-    async processVideoSource(videoUrl, sourceName, scanlator, baseUrl, altHosterSelection) {
-        const videos = [];
-        
-        try {
-            // Internal player
-            if (videoUrl.includes("/apivtwo/") && altHosterSelection.includes('player')) {
-                const quality = `internal ${sourceName} (${scanlator})`;
-                const vids = await new AllAnimeExtractor({ "Referer": baseUrl }, "https://allanime.to").videoFromUrl(videoUrl, quality);
-                videos.push(...vids);
-            }
-            
-            // Vidstreaming
-            if (["vidstreaming", "https://gogo", "playgo1.cc", "playtaku", "vidcloud"].some(e => videoUrl.includes(e)) && altHosterSelection.includes('vidstreaming')) {
-                const vids = await gogoCdnExtractor(videoUrl);
-                vids.forEach(v => v.quality += ` (${scanlator})`);
-                videos.push(...vids);
-            }
-            
-            // Doodstream
-            if (["dood", "d0"].some(e => videoUrl.includes(e)) && altHosterSelection.includes('dood')) {
-                const vids = await doodExtractor(videoUrl);
-                vids.forEach(v => v.quality += ` (${scanlator})`);
-                videos.push(...vids);
-            }
-            
-            // Okru
-            if (["ok.ru", "okru"].some(e => videoUrl.includes(e)) && altHosterSelection.includes('okru')) {
-                const vids = await okruExtractor(videoUrl);
-                vids.forEach(v => v.quality += ` (${scanlator})`);
-                videos.push(...vids);
-            }
-            
-            // Mp4upload
-            if (videoUrl.includes("mp4upload.com") && altHosterSelection.includes('mp4upload')) {
-                const vids = await mp4UploadExtractor(videoUrl);
-                vids.forEach(v => v.quality += ` (${scanlator})`);
-                videos.push(...vids);
-            }
-            
-            // Streamlare
-            if (videoUrl.includes("streamlare.com") && altHosterSelection.includes('streamlare')) {
-                const vids = await streamlareExtractor(videoUrl, 'Streamlare ');
-                vids.forEach(v => v.quality += ` (${scanlator})`);
-                videos.push(...vids);
-            }
-            
-            // Filemoon
-            if (["filemoon", "moonplayer"].some(e => videoUrl.includes(e)) && altHosterSelection.includes('filemoon')) {
-                const vids = await filemoonExtractor(videoUrl);
-                vids.forEach(v => v.quality += ` (${scanlator})`);
-                videos.push(...vids);
-            }
-            
-            // Streamwish
-            if (videoUrl.includes("wish") && altHosterSelection.includes('streamwish')) {
-                const vids = await streamWishExtractor(videoUrl, 'StreamWish ');
-                vids.forEach(v => v.quality += ` (${scanlator})`);
-                videos.push(...vids);
-            }
-        } catch (error) {
-            console.error("Error processing video source:", error);
         }
         
         return videos;
@@ -387,8 +397,8 @@ class DefaultExtension extends MProvider {
                     "title": "Preferred Video Server",
                     "summary": "",
                     "valueIndex": 0,
-                    "entries": ["Ac", "Ak", "Kir", "Rab", "Luf-mp4", "Si-Hls", "S-mp4", "Ac-Hls", "Uv-mp4", "Pn-Hls", "vidstreaming", "okru", "mp4upload", "streamlare", "doodstream", "filemoon", "streamwish"],
-                    "entryValues": ["Ac", "Ak", "Kir", "Rab", "Luf-mp4", "Si-Hls", "S-mp4", "Ac-Hls", "Uv-mp4", "Pn-Hls", "vidstreaming", "okru", "mp4upload", "streamlare", "doodstream", "filemoon", "streamwish"]
+                    "entries": ["Ac", "Ak", "Kir", "Rab", "Luf-mp4", "Si-Hls", "S-mp4", "Ac-Hls", "Uv-mp4", "Pn-Hls", "vidstreaming", "okru", "streamlare", "doodstream", "filemoon", "streamwish"],
+                    "entryValues": ["Ac", "Ak", "Kir", "Rab", "Luf-mp4", "Si-Hls", "S-mp4", "Ac-Hls", "Uv-mp4", "Pn-Hls", "vidstreaming", "okru", "streamlare", "doodstream", "filemoon", "streamwish"]
                 }
             },
             {
@@ -396,9 +406,9 @@ class DefaultExtension extends MProvider {
                 "multiSelectListPreference": {
                     "title": "Enable/Disable Alternative Hosts",
                     "summary": "",
-                    "entries": ["player", "vidstreaming", "okru", "mp4upload", "streamlare", "doodstream", "filemoon", "streamwish"],
-                    "entryValues": ["player", "vidstreaming", "okru", "mp4upload", "streamlare", "doodstream", "filemoon", "streamwish"],
-                    "values": ["player", "vidstreaming", "okru", "mp4upload", "streamlare", "doodstream", "filemoon", "streamwish"]
+                    "entries": ["player", "vidstreaming", "okru", "streamlare", "doodstream", "filemoon", "streamwish"],
+                    "entryValues": ["player", "vidstreaming", "okru", "streamlare", "doodstream", "filemoon", "streamwish"],
+                    "values": ["player", "vidstreaming", "okru", "streamlare", "doodstream", "filemoon", "streamwish"]
                 }
             }
         ];
