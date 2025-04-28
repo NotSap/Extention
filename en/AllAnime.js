@@ -167,25 +167,28 @@ class DefaultExtension extends MProvider {
             const subPref = preferences.get("preferred_sub") || "sub";
             const ep = JSON.parse(url);
             
+            // First check if this is One Piece and if dubs exist
+            const isOnePiece = this.isOnePiece(ep.showId);
+            let hasDubsAvailable = false;
+            
+            if (isOnePiece) {
+                hasDubsAvailable = await this.checkOnePieceDubs(ep.showId);
+                console.log(`One Piece dub availability: ${hasDubsAvailable}`);
+            }
+
             // Get all available translation types
             const allTranslationTypes = Array.isArray(ep.translationType) ? 
                 [...new Set(ep.translationType)] : 
                 (ep.translationType ? [ep.translationType] : ["sub"]);
 
-            // Special handling for One Piece
-            const isOnePiece = ep.showId.includes("one-piece") || 
-                              ep.showId.includes("One_Piece") || 
-                              ep.showId.includes("one_piece");
-            
-            // If One Piece and user prefers dub, prioritize checking dub first
-            if (isOnePiece && subPref === "dub" && allTranslationTypes.includes("dub")) {
+            // If One Piece and dubs are confirmed available, ensure dub is first
+            if (isOnePiece && hasDubsAvailable && allTranslationTypes.includes("dub")) {
                 allTranslationTypes.sort((a, b) => a === "dub" ? -1 : b === "dub" ? 1 : 0);
             }
 
             const videos = [];
-            // Remove mp4upload from hoster selection since it's unreliable
             const altHosterSelection = (preferences.get('alt_hoster_selection1') || [])
-                .filter(h => h !== "mp4upload");
+                .filter(h => h !== "mp4upload"); // Remove unreliable mp4upload
 
             // Process all available types
             for (const transType of allTranslationTypes) {
@@ -196,7 +199,8 @@ class DefaultExtension extends MProvider {
                         transType,
                         baseUrl,
                         altHosterSelection,
-                        isOnePiece
+                        isOnePiece,
+                        hasDubsAvailable
                     );
                     
                     // Deduplicate while adding
@@ -213,33 +217,10 @@ class DefaultExtension extends MProvider {
                 }
             }
 
-            // Special fallback for One Piece if no videos found
-            if (videos.length === 0 && isOnePiece) {
-                // Try forcing dub even if not originally listed
-                if (!allTranslationTypes.includes("dub")) {
-                    const dubVideos = await this.fetchVideosForType(
-                        ep.showId,
-                        ep.episodeString,
-                        "dub",
-                        baseUrl,
-                        altHosterSelection,
-                        true
-                    );
-                    videos.push(...dubVideos);
-                }
-                
-                // If still no videos, try sub as last resort
-                if (videos.length === 0 && !allTranslationTypes.includes("sub")) {
-                    const subVideos = await this.fetchVideosForType(
-                        ep.showId,
-                        ep.episodeString,
-                        "sub",
-                        baseUrl,
-                        altHosterSelection,
-                        true
-                    );
-                    videos.push(...subVideos);
-                }
+            // Special handling if no videos found
+            if (videos.length === 0) {
+                console.log("No videos found, trying fallback methods");
+                // Try alternative methods here if needed
             }
 
             return this.sortVideos(videos);
@@ -249,7 +230,37 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    async fetchVideosForType(showId, episodeString, transType, baseUrl, altHosterSelection, isOnePiece = false) {
+    isOnePiece(showId) {
+        return showId && (
+            showId.includes("one-piece") || 
+            showId.includes("One_Piece") || 
+            showId.includes("one_piece") ||
+            showId.toLowerCase().includes("onepiece")
+        );
+    }
+
+    async checkOnePieceDubs(showId) {
+        try {
+            // First check if the show itself has dub available
+            const showInfoUrl = `?variables=%7B%22id%22:%22${showId}%22%7D&query=query($id:String!){show(_id:$id){availableEpisodesDetail}}`;
+            const showInfo = JSON.parse(await this.request(showInfoUrl)).data?.show;
+            
+            if (showInfo?.availableEpisodesDetail?.dub?.length > 0) {
+                return true;
+            }
+
+            // If no dub in availableEpisodesDetail, try a different API check
+            const dubCheckUrl = `?variables=%7B%22showId%22:%22${showId}%22,%22episodeString%22:%221%22,%22translationType%22:%22dub%22%7D&query=query($showId:String!,$episodeString:String!,$translationType:VaildTranslationTypeEnumType!){episode(showId:$showId,episodeString:$episodeString,translationType:$translationType){sourceUrls}}`;
+            const dubCheck = JSON.parse(await this.request(dubCheckUrl)).data?.episode;
+            
+            return dubCheck?.sourceUrls?.length > 0;
+        } catch (error) {
+            console.error("Error checking One Piece dubs:", error);
+            return false;
+        }
+    }
+
+    async fetchVideosForType(showId, episodeString, transType, baseUrl, altHosterSelection, isOnePiece = false, hasDubsAvailable = false) {
         const videos = [];
         const scanlator = transType === "sub" ? "sub" : "dub";
         
@@ -260,13 +271,20 @@ class DefaultExtension extends MProvider {
 
             if (!videoJson?.data?.episode?.sourceUrls) {
                 console.log(`No sourceUrls found for ${scanlator}`);
+                
+                // Special case for One Piece dub
+                if (isOnePiece && transType === "dub" && hasDubsAvailable) {
+                    console.log("Trying alternative dub source for One Piece");
+                    const altDubVideos = await this.fetchAlternativeOnePieceDub(
+                        showId, 
+                        episodeString,
+                        baseUrl,
+                        altHosterSelection
+                    );
+                    return altDubVideos;
+                }
+                
                 return videos;
-            }
-
-            // Special handling for One Piece dub
-            if (isOnePiece && transType === "dub" && videoJson.data.episode.sourceUrls.length === 0) {
-                console.log("No dub sources found, trying alternative method for One Piece");
-                // Here you could add alternative API calls or special handling for One Piece dub
             }
 
             await Promise.all(videoJson.data.episode.sourceUrls.map(async (video) => {
@@ -283,7 +301,7 @@ class DefaultExtension extends MProvider {
                         videos.push(...vids);
                     }
                     // Process vidstreaming
-                    else if (["vidstreaming", "https://gogo", "playgo1.cc", "playtaku", "vidcloud"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('vidstreaming')) {
+                    else if (["vidstreaming", "gogo", "playgo1", "playtaku", "vidcloud"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('vidstreaming')) {
                         const vids = await gogoCdnExtractor(videoUrl);
                         vids.forEach(v => v.quality += ` (${scanlator})`);
                         videos.push(...vids);
@@ -325,6 +343,50 @@ class DefaultExtension extends MProvider {
 
         } catch (error) {
             console.error(`Error fetching ${scanlator} videos:`, error);
+        }
+        
+        return videos;
+    }
+
+    async fetchAlternativeOnePieceDub(showId, episodeString, baseUrl, altHosterSelection) {
+        const videos = [];
+        console.log("Attempting alternative One Piece dub source fetch");
+        
+        try {
+            // Try alternative API endpoint for One Piece dubs
+            const altUrl = `?variables=%7B%22showId%22:%22${showId}%22,%22episodeString%22:%22${episodeString}%22,%22translationType%22:%22dub%22%7D&query=query($showId:String!,$episodeString:String!,$translationType:VaildTranslationTypeEnumType!){episode(showId:$showId,episodeString:$episodeString,translationType:$translationType){sourceUrls}}`;
+            const response = await this.request(altUrl);
+            const videoJson = JSON.parse(response);
+
+            if (!videoJson?.data?.episode?.sourceUrls) {
+                console.log("No alternative dub sources found");
+                return videos;
+            }
+
+            // Process the alternative sources
+            await Promise.all(videoJson.data.episode.sourceUrls.map(async (video) => {
+                try {
+                    if (!video.sourceUrl) return;
+                    
+                    const videoUrl = this.decryptSource(video.sourceUrl);
+                    if (!videoUrl) return;
+
+                    if (videoUrl.includes("/apivtwo/") && altHosterSelection.includes('player')) {
+                        const quality = `internal ${video.sourceName} (dub)`;
+                        const vids = await new AllAnimeExtractor({ "Referer": baseUrl }, "https://allanime.to").videoFromUrl(videoUrl, quality);
+                        videos.push(...vids);
+                    }
+                    else if (["vidstreaming"].some(element => videoUrl.includes(element)) && altHosterSelection.includes('vidstreaming')) {
+                        const vids = await gogoCdnExtractor(videoUrl);
+                        vids.forEach(v => v.quality += " (dub)");
+                        videos.push(...vids);
+                    }
+                } catch (error) {
+                    console.error("Error processing alternative dub source:", error);
+                }
+            }));
+        } catch (error) {
+            console.error("Error fetching alternative One Piece dub:", error);
         }
         
         return videos;
