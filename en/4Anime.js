@@ -2,40 +2,33 @@ globalThis.extension = new Extension({
   name: "4AnimeGG",
   description: "4anime.gg source for dubbed anime",
   version: "1.0.0",
-  author: "You",
   lang: "en",
   baseUrl: "https://4anime.gg",
   isAdult: false,
   isDub: true,
 
-  search: async (query) => {
+  search: async function (query) {
     const res = await fetch(`https://4anime.gg/search?keyword=${encodeURIComponent(query)}`);
     const html = await res.text();
     const doc = new DOMParser().parseFromString(html, "text/html");
-    const items = [...doc.querySelectorAll(".items .item")];
+    const items = Array.from(doc.querySelectorAll(".items .item"));
 
-    return items.map((el) => {
-      const title = el.querySelector(".name")?.textContent.trim();
-      const url = el.querySelector("a")?.href;
-      const img = el.querySelector("img")?.src;
-
-      return {
-        title,
-        url,
-        img,
-      };
-    });
+    return items.map((el) => ({
+      title: el.querySelector("h3")?.textContent.trim(),
+      url: el.querySelector("a")?.href,
+      thumbnail: el.querySelector("img")?.src,
+    }));
   },
 
-  fetchAnimeInfo: async (animeUrl) => {
+  fetchAnimeInfo: async function (animeUrl) {
     const res = await fetch(animeUrl);
     const html = await res.text();
     const doc = new DOMParser().parseFromString(html, "text/html");
 
     const title = doc.querySelector("h1")?.textContent.trim();
-    const episodes = [...doc.querySelectorAll(".episodes a")].map((el) => ({
-      title: el.textContent.trim(),
-      url: el.href,
+    const episodes = Array.from(doc.querySelectorAll(".episodes a")).map((a) => ({
+      title: a.textContent.trim(),
+      url: a.href,
     }));
 
     return {
@@ -44,21 +37,19 @@ globalThis.extension = new Extension({
     };
   },
 
-  loadEpisodeSources: async (episodeUrl) => {
+  loadEpisodeSources: async function (episodeUrl) {
     const res = await fetch(episodeUrl);
     const html = await res.text();
-    const doc = new DOMParser().parseFromString(html, "text/html");
+    const match = html.match(/"file":"(https:[^"]+\.mp4)"/);
+    const videoUrl = match ? match[1].replace(/\\\//g, "/") : null;
 
-    const iframe = doc.querySelector("iframe");
-    const videoUrl = iframe?.src;
-
-    if (!videoUrl) return [];
+    if (!videoUrl) throw new Error("Video source not found");
 
     return [
       {
         url: videoUrl,
-        type: "hls",
-        quality: "auto",
+        quality: "default",
+        isM3U8: videoUrl.includes(".m3u8"),
       },
     ];
   },
