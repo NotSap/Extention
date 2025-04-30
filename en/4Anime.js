@@ -6,7 +6,7 @@ const mangayomiSources = [{
     "typeSource": "single",
     "itemType": 1,
     "isNsfw": false,
-    "version": "1.0.2",
+    "version": "1.0.3",
     "dateFormat": "",
     "dateFormatLocale": "",
     "pkgPath": "anime/src/en/4animegg.js"
@@ -17,7 +17,7 @@ class DefaultExtension extends MProvider {
         super();
         this.cache = new Map();
         this.retryCount = 3;
-        this.timeout = 20000;
+        this.timeout = 15000;
         this.userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36";
     }
 
@@ -31,13 +31,12 @@ class DefaultExtension extends MProvider {
                     headers: {
                         "User-Agent": this.userAgent,
                         "Referer": this.source.baseUrl,
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                         ...options.headers
                     }
                 });
 
-                if (response.statusCode === 404) {
-                    throw new Error("Page not found");
-                }
+                if (response.statusCode === 404) return null;
                 if (response.statusCode >= 400) {
                     throw new Error(`HTTP ${response.statusCode}`);
                 }
@@ -57,47 +56,34 @@ class DefaultExtension extends MProvider {
                 return this.cache.get(cacheKey);
             }
 
-            // Properly encode and format the search URL
-            const searchUrl = new URL(`${this.source.baseUrl}/search`);
-            searchUrl.searchParams.set("keyword", query.trim());
-            
-            const response = await this.request(searchUrl.toString());
+            const searchUrl = `${this.source.baseUrl}/?s=${encodeURIComponent(query)}`;
+            const response = await this.request(searchUrl);
+            if (!response) return { list: [], hasNextPage: false };
+
             const doc = new DOMParser().parseFromString(response.body, "text/html");
 
-            // Check if search results container exists
-            const resultsContainer = doc.querySelector(".items") || doc.querySelector(".list-updates") || doc.querySelector(".anime-list");
+            // Check for maintenance or blocking
+            if (doc.querySelector(".maintenance") || doc.body.textContent.includes("Cloudflare")) {
+                throw new Error("Site is under maintenance or blocking requests");
+            }
+
+            // Multiple possible selectors for search results
+            const resultsContainer = doc.querySelector(".items") || 
+                                   doc.querySelector(".list-updates") || 
+                                   doc.querySelector(".anime-list") ||
+                                   doc.querySelector(".film-list");
+
             if (!resultsContainer) {
-                throw new Error("Search results container not found");
+                return { list: [], hasNextPage: false };
             }
 
-            // Multiple possible selectors for items
-            const itemSelectors = [
-                ".items .item", 
-                ".list-updates .anime", 
-                ".anime-list .anime",
-                ".film-list .film"
-            ];
-
-            let items = [];
-            for (const selector of itemSelectors) {
-                items = Array.from(doc.querySelectorAll(selector));
-                if (items.length > 0) break;
-            }
-
+            const items = Array.from(resultsContainer.querySelectorAll(".item, .anime, .film"));
             if (items.length === 0) {
-                // Check for "no results" message
-                const noResultsMsg = doc.querySelector(".notfound") || 
-                                    doc.querySelector(".nothing") ||
-                                    doc.body.textContent.match(/no results|not found/i);
-                if (noResultsMsg) {
-                    return { list: [], hasNextPage: false };
-                }
-                throw new Error("No items found in search results");
+                return { list: [], hasNextPage: false };
             }
 
             const list = items.map((el) => {
-                // Multiple possible selectors for each element
-                const titleEl = el.querySelector("h3") || el.querySelector(".title") || el.querySelector(".name");
+                const titleEl = el.querySelector("h3, .title, .name");
                 const linkEl = el.querySelector("a[href]");
                 const imgEl = el.querySelector("img[src]");
 
@@ -110,13 +96,9 @@ class DefaultExtension extends MProvider {
                 };
             }).filter(item => item !== null);
 
-            if (list.length === 0) {
-                throw new Error("All search results were invalid");
-            }
-
             const result = { 
                 list, 
-                hasNextPage: this.checkNextPage(doc) 
+                hasNextPage: this.checkNextPage(doc)
             };
 
             this.cache.set(cacheKey, result);
@@ -131,16 +113,6 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    checkNextPage(doc) {
-        // Check various pagination indicators
-        const pagination = doc.querySelector(".pagination");
-        if (!pagination) return false;
-        
-        const nextPageBtn = pagination.querySelector("a.next") || 
-                           pagination.querySelector("a:contains('Next')");
-        return nextPageBtn !== null;
-    }
-
     async getDetail(url) {
         try {
             if (this.cache.has(url)) {
@@ -148,9 +120,11 @@ class DefaultExtension extends MProvider {
             }
 
             const response = await this.request(url);
+            if (!response) return this.emptyDetailResponse("Anime not found");
+
             const doc = new DOMParser().parseFromString(response.body, "text/html");
 
-            // Multiple possible title selectors
+            // Get title
             const titleEl = doc.querySelector("h1.title") || 
                           doc.querySelector("h1") || 
                           doc.querySelector(".detail h1");
@@ -158,7 +132,7 @@ class DefaultExtension extends MProvider {
                 throw new Error("Title element not found");
             }
 
-            // Multiple possible episode containers
+            // Get episodes
             const episodesContainer = doc.querySelector(".episodes") || 
                                     doc.querySelector(".episode-list") ||
                                     doc.querySelector(".server");
@@ -198,51 +172,6 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    parseStatus(doc) {
-        // Multiple ways to find status
-        const statusEl = doc.querySelector(".status") || 
-                        doc.querySelector(".info:contains('Status')") ||
-                        doc.querySelector("span:contains('Status')");
-        
-        if (!statusEl) return 5; // Unknown
-        
-        const statusText = statusEl.textContent.toLowerCase().trim();
-        if (statusText.includes("ongoing")) return 0;
-        if (statusText.includes("complete")) return 1;
-        if (statusText.includes("upcoming")) return 2;
-        return 5;
-    }
-
-    parseGenres(doc) {
-        try {
-            // Multiple possible genre containers
-            const genreContainer = doc.querySelector(".genre") || 
-                                 doc.querySelector(".info:contains('Genre')") ||
-                                 doc.querySelector(".tags");
-            
-            if (!genreContainer) return [];
-            
-            const genreElements = genreContainer.querySelectorAll("a") || 
-                                genreContainer.querySelectorAll("span");
-            
-            return Array.from(genreElements)
-                .map(el => el.textContent.trim())
-                .filter(text => text.length > 0);
-        } catch {
-            return [];
-        }
-    }
-
-    emptyDetailResponse(error = "") {
-        return {
-            description: error || "Error loading details",
-            author: "",
-            status: 5,
-            genre: [],
-            episodes: []
-        };
-    }
-
     async getVideoList(url) {
         try {
             const cacheKey = `video:${url}`;
@@ -251,9 +180,9 @@ class DefaultExtension extends MProvider {
             }
 
             const response = await this.request(url);
-            const html = response.body;
+            if (!response) return [];
 
-            // Multiple video extraction methods
+            const html = response.body;
             const videoUrl = this.extractVideoUrl(html);
             if (!videoUrl) {
                 throw new Error("Video source not found in page");
@@ -277,16 +206,40 @@ class DefaultExtension extends MProvider {
         }
     }
 
+    // Helper methods
+    checkNextPage(doc) {
+        const pagination = doc.querySelector(".pagination");
+        if (!pagination) return false;
+        return pagination.querySelector("a.next, a:contains('Next')") !== null;
+    }
+
+    parseStatus(doc) {
+        const statusEl = doc.querySelector(".status") || 
+                        doc.querySelector(".info:contains('Status')");
+        if (!statusEl) return 5;
+        
+        const statusText = statusEl.textContent.toLowerCase().trim();
+        if (statusText.includes("ongoing")) return 0;
+        if (statusText.includes("complete")) return 1;
+        return 5;
+    }
+
+    parseGenres(doc) {
+        const genreContainer = doc.querySelector(".genre") || 
+                             doc.querySelector(".info:contains('Genre')");
+        if (!genreContainer) return [];
+        
+        return Array.from(genreContainer.querySelectorAll("a, span"))
+            .map(el => el.textContent.trim())
+            .filter(text => text.length > 0);
+    }
+
     extractVideoUrl(html) {
-        // Multiple patterns to try
         const patterns = [
             /"file":"(https:[^"]+\.(?:mp4|m3u8))"/,
             /src="([^"]+\.(?:mp4|m3u8))"/,
             /video src="([^"]+)"/,
             /player\.setup\({\s*file:\s*"([^"]+)"/,
-            /sources:\s*\[\s*{\s*file:\s*"([^"]+)"/,
-            /var\s+videoSrc\s*=\s*"([^"]+)"/,
-            /loadVideo\("([^"]+)"\)/,
             /<iframe[^>]+src="([^"]+)"/,
             /data-video="([^"]+)"/
         ];
@@ -295,54 +248,43 @@ class DefaultExtension extends MProvider {
             const match = html.match(pattern);
             if (match && match[1]) {
                 let url = match[1];
-                if (url.startsWith("//")) {
-                    url = "https:" + url;
-                }
-                if (url.includes("\\/")) {
-                    url = url.replace(/\\\//g, "/");
-                }
-                if (this.validateVideoUrl(url)) {
-                    return url;
-                }
+                if (url.startsWith("//")) url = "https:" + url;
+                if (url.includes("\\/")) url = url.replace(/\\\//g, "/");
+                if (this.validateVideoUrl(url)) return url;
             }
         }
         return null;
     }
 
     validateVideoUrl(url) {
-        if (!url) return false;
-        try {
-            new URL(url);
-            return url.match(/\.(mp4|m3u8|mkv|avi|mov|webm|stream)/i) !== null;
-        } catch {
-            return false;
-        }
+        return url && /\.(mp4|m3u8|mkv|avi|mov|webm|stream)/i.test(url);
     }
 
     getFallbackImage() {
         return "https://via.placeholder.com/210x300/2D2D3D/FFFFFF/?text=No+Image";
     }
 
+    emptyDetailResponse(error = "") {
+        return {
+            description: error || "Error loading details",
+            author: "",
+            status: 5,
+            genre: [],
+            episodes: []
+        };
+    }
+
+    // Required methods
     async getPopular(page) {
         try {
             const response = await this.request(`${this.source.baseUrl}/popular`);
-            const doc = new DOMParser().parseFromString(response.body, "text/html");
-            
-            const itemSelectors = [
-                ".items .item", 
-                ".list-updates .anime", 
-                ".anime-list .anime",
-                ".film-list .film"
-            ];
+            if (!response) return { list: [], hasNextPage: false };
 
-            let items = [];
-            for (const selector of itemSelectors) {
-                items = Array.from(doc.querySelectorAll(selector));
-                if (items.length > 0) break;
-            }
+            const doc = new DOMParser().parseFromString(response.body, "text/html");
+            const items = Array.from(doc.querySelectorAll(".item, .anime, .film"));
 
             const list = items.map((el) => {
-                const titleEl = el.querySelector("h3") || el.querySelector(".title") || el.querySelector(".name");
+                const titleEl = el.querySelector("h3, .title, .name");
                 const linkEl = el.querySelector("a[href]");
                 const imgEl = el.querySelector("img[src]");
 
@@ -361,33 +303,20 @@ class DefaultExtension extends MProvider {
             };
         } catch (error) {
             console.error("Failed to get popular anime:", error);
-            return { 
-                list: [], 
-                hasNextPage: false 
-            };
+            return { list: [], hasNextPage: false };
         }
     }
 
     async getLatestUpdates(page) {
         try {
             const response = await this.request(`${this.source.baseUrl}/latest`);
-            const doc = new DOMParser().parseFromString(response.body, "text/html");
-            
-            const itemSelectors = [
-                ".items .item", 
-                ".list-updates .anime", 
-                ".anime-list .anime",
-                ".film-list .film"
-            ];
+            if (!response) return { list: [], hasNextPage: false };
 
-            let items = [];
-            for (const selector of itemSelectors) {
-                items = Array.from(doc.querySelectorAll(selector));
-                if (items.length > 0) break;
-            }
+            const doc = new DOMParser().parseFromString(response.body, "text/html");
+            const items = Array.from(doc.querySelectorAll(".item, .anime, .film"));
 
             const list = items.map((el) => {
-                const titleEl = el.querySelector("h3") || el.querySelector(".title") || el.querySelector(".name");
+                const titleEl = el.querySelector("h3, .title, .name");
                 const linkEl = el.querySelector("a[href]");
                 const imgEl = el.querySelector("img[src]");
 
@@ -406,10 +335,7 @@ class DefaultExtension extends MProvider {
             };
         } catch (error) {
             console.error("Failed to get latest updates:", error);
-            return { 
-                list: [], 
-                hasNextPage: false 
-            };
+            return { list: [], hasNextPage: false };
         }
     }
 
@@ -423,26 +349,6 @@ class DefaultExtension extends MProvider {
                     valueIndex: 0,
                     entries: ["Auto", "1080p", "720p", "480p"],
                     entryValues: ["auto", "1080", "720", "480"]
-                }
-            },
-            {
-                key: "retry_count",
-                listPreference: {
-                    title: "Retry Attempts",
-                    summary: "Number of retries for failed requests",
-                    valueIndex: 1,
-                    entries: ["1", "2", "3"],
-                    entryValues: ["1", "2", "3"]
-                }
-            },
-            {
-                key: "timeout",
-                listPreference: {
-                    title: "Request Timeout (seconds)",
-                    summary: "",
-                    valueIndex: 2,
-                    entries: ["10", "20", "30"],
-                    entryValues: ["10000", "20000", "30000"]
                 }
             }
         ];
