@@ -38,56 +38,36 @@
   }, 
 {
   "name": "Anix",
-  "version": "1.0.0",
-  "icon": "https://anix.to/favicon.ico",
-  "author": "YourName",
-  "description": "Anix.to extension for dubbed anime (including One Piece) with HD streaming",
-  "type": 1,
-  "language": "en",
+  "id": 558217177,
   "baseUrl": "https://anix.to",
-  "search": {
-    "parameter": "keyword",
-    "method": "GET",
-    "path": "/filter"
-  },
-  "supportsDub": true,
-  "supportedFeatures": {
-    "latestUpdates": true,
+  "lang": "en",
+  "typeSource": "single",
+  "iconUrl": "https://anix.to/favicon.ico",
+  "dateFormat": "",
+  "dateFormatLocale": "",
+  "isNsfw": false,
+  "hasCloudflare": true,
+  "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/main/en/Anix.js",
+  "apiUrl": "",
+  "version": "1.0.0",
+  "isManga": false,
+  "itemType": 1,
+  "isFullData": false,
+  "appMinVerReq": "1.4.0",
+  "additionalParams": "",
+  "sourceCodeLanguage": 1,
+  "dubSupported": true,
+  "features": {
     "search": true,
-    "filterByGenre": false,
-    "filterByYear": false,
-    "filterByStatus": false
-  },
-  "preferences": [
-    {
-      "key": "preferred_server",
-      "title": "Video Server Preference",
-      "type": "list",
-      "entries": ["Vidstream", "MyCloud", "StreamSB"],
-      "entryValues": ["vidstream", "mycloud", "streamsb"],
-      "defaultValue": "vidstream"
-    },
-    {
-      "key": "force_dub",
-      "title": "Always Show Dubbed",
-      "type": "checkbox",
-      "defaultValue": true
-    }
-  ],
-  "requirements": {
-    "minAppVersion": "1.4.0",
-    "requiresLogin": false,
-    "requiresPremium": false
+    "latestUpdates": true,
+    "popular": true,
+    "genreFilter": false,
+    "statusFilter": false
   },
   "headers": {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Referer": "https://anix.to/"
-  },
-  "knownIssues": [
-    "Cloudflare may block requests during peak hours",
-    "Episode numbers may not match official releases"
-  ],
-  "updateUrl": "https://raw.githubusercontent.com/NotSap/Extention/main/en/Anix.js"
+    "Referer": "https://anix.to/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+  }
 },
 {
   "name":"AllAnime",
