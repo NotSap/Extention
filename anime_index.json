@@ -87,7 +87,7 @@
     "Cloudflare may block requests during peak hours",
     "Episode numbers may not match official releases"
   ],
-  "updateUrl": "https://raw.githubusercontent.com/yourusername/mangayomi-extensions/main/anime/en/anix.json"
+  "updateUrl": "https://raw.githubusercontent.com/NotSap/Extention/main/en/Anix.js"
 },
 {
   "name":"AllAnime",
