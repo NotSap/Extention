@@ -37,21 +37,57 @@
     "sourceCodeLanguage":0
   }, 
 {
-  "name": "4AnimeGG",
-  "id": 44556677,
-  "baseUrl": "https://4anime.gg",
-  "lang": "en",
-  "typeSource": "single",
-  "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://4anime.gg",
-  "isNsfw": false,
-  "hasCloudflare": false,
-  "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/main/en/4Anime.js",
+  "name": "Anix",
   "version": "1.0.0",
-  "isManga": false,
-  "itemType": 1,
-  "isFullData": false,
-  "appMinVerReq": "0.5.0",
-  "sourceCodeLanguage": 1
+  "icon": "https://anix.to/favicon.ico",
+  "author": "YourName",
+  "description": "Anix.to extension for dubbed anime (including One Piece) with HD streaming",
+  "type": 1,
+  "language": "en",
+  "baseUrl": "https://anix.to",
+  "search": {
+    "parameter": "keyword",
+    "method": "GET",
+    "path": "/filter"
+  },
+  "supportsDub": true,
+  "supportedFeatures": {
+    "latestUpdates": true,
+    "search": true,
+    "filterByGenre": false,
+    "filterByYear": false,
+    "filterByStatus": false
+  },
+  "preferences": [
+    {
+      "key": "preferred_server",
+      "title": "Video Server Preference",
+      "type": "list",
+      "entries": ["Vidstream", "MyCloud", "StreamSB"],
+      "entryValues": ["vidstream", "mycloud", "streamsb"],
+      "defaultValue": "vidstream"
+    },
+    {
+      "key": "force_dub",
+      "title": "Always Show Dubbed",
+      "type": "checkbox",
+      "defaultValue": true
+    }
+  ],
+  "requirements": {
+    "minAppVersion": "1.4.0",
+    "requiresLogin": false,
+    "requiresPremium": false
+  },
+  "headers": {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Referer": "https://anix.to/"
+  },
+  "knownIssues": [
+    "Cloudflare may block requests during peak hours",
+    "Episode numbers may not match official releases"
+  ],
+  "updateUrl": "https://raw.githubusercontent.com/yourusername/mangayomi-extensions/main/anime/en/anix.json"
 },
 {
   "name":"AllAnime",
