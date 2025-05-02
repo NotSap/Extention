@@ -1,17 +1,4 @@
 // https://raw.githubusercontent.com/NotSap/Extention/main/en/9animeTV.js
-const mangayomiSources = [{
-    "name": "9Anime",
-    "id": 957331416,
-    "baseUrl": "https://9animetv.to",
-    "lang": "en",
-    "typeSource": "single",
-    "iconUrl": "https://9animetv.to/favicon.ico",
-    "isNsfw": false,
-    "version": "1.0.0",
-    "itemType": 1,
-    "hasCloudflare": true
-}];
-
 class DefaultExtension extends MProvider {
     constructor() {
         super();
