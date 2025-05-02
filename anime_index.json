@@ -48,6 +48,7 @@
   "version": "1.0.1",
   "isManga": false,
   "itemType": 1,
+  "hasCloudflare": true,
   "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/main/en/Anix.js",
   "sourceCodeLanguage": 1
 },
