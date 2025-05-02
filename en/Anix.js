@@ -52,53 +52,67 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    async search(query, page, filters) {
-        try {
-            const searchUrl = new URL(`${this.source.baseUrl}/filter`);
-            searchUrl.searchParams.set("keyword", query.trim());
-            searchUrl.searchParams.set("page", page || 1);
+async search(query, page, filters) {
+    try {
+        // Method 1: Try official search endpoint first
+        let searchUrl = new URL(`${this.source.baseUrl}/filter`);
+        searchUrl.searchParams.set("keyword", query);
+        searchUrl.searchParams.set("page", page || 1);
 
-            const response = await this.request(searchUrl.toString());
-            const doc = new DOMParser().parseFromString(response.body, "text/html");
+        let response = await this.request(searchUrl.toString());
+        let doc = new DOMParser().parseFromString(response.body, "text/html");
+        let items = Array.from(doc.querySelectorAll('.film_list-wrap .flw-item'));
 
-            // Multiple selector fallbacks
-            const itemsContainer = doc.querySelector(".film_list-wrap") || doc.querySelector(".tab-content");
-            if (!itemsContainer) return { list: [], hasNextPage: false };
-
-            const items = Array.from(itemsContainer.querySelectorAll(".flw-item, .item")).slice(0, 25);
-
-            const results = items.map(item => {
-                // Title element with fallbacks
-                const titleEl = item.querySelector(".film-name a, .name a, h3 a");
-                if (!titleEl) return null;
-
-                // Dub detection (multiple methods)
-                const isDub = item.querySelector(".tick.ltr, .dub-badge")?.textContent.toLowerCase().includes("dub") || 
-                              titleEl.textContent.toLowerCase().includes("dub");
-
-                // Image with fallback sources
-                const imgEl = item.querySelector(".film-poster img, img.poster");
-                const imageUrl = imgEl?.getAttribute("data-src") || imgEl?.src;
-
-                return {
-                    name: `${titleEl.textContent.trim()}${isDub ? " (Dub)" : ""}`,
-                    url: titleEl.href.startsWith("http") ? titleEl.href : `${this.source.baseUrl}${titleEl.href}`,
-                    imageUrl: imageUrl || this.getFallbackImage(),
-                    language: isDub ? "dub" : "sub"
-                };
-            }).filter(Boolean);
-
-            return {
-                list: results,
-                hasNextPage: !!doc.querySelector(".pagination .next, .page-item:last-child:not(.disabled)")
-            };
-
-        } catch (error) {
-            console.error(`Search failed for "${query}":`, error);
-            return { list: [], hasNextPage: false };
+        // Method 2: If no results, try alternate search API
+        if (items.length === 0) {
+            console.log("Trying alternate search method...");
+            const apiUrl = `${this.source.baseUrl}/ajax/search?keyword=${encodeURIComponent(query)}`;
+            response = await this.request(apiUrl, {
+                headers: {
+                    "X-Requested-With": "XMLHttpRequest"
+                }
+            });
+            
+            const data = JSON.parse(response.body);
+            doc = new DOMParser().parseFromString(data.html, "text/html");
+            items = Array.from(doc.querySelectorAll('.flw-item'));
         }
-    }
 
+        // Method 3: Fallback to scraping homepage if still no results
+        if (items.length === 0 && page === 1) {
+            console.log("Falling back to homepage scrape...");
+            response = await this.request(this.source.baseUrl);
+            doc = new DOMParser().parseFromString(response.body, "text/html");
+            items = Array.from(doc.querySelectorAll('.flw-item'))
+                .filter(item => {
+                    const title = item.querySelector('.film-name')?.textContent.toLowerCase();
+                    return title?.includes(query.toLowerCase());
+                });
+        }
+
+        // Process results
+        const results = items.map(item => {
+            const titleEl = item.querySelector('.film-name a, h3 a');
+            const isDub = item.querySelector('.tick.ltr')?.textContent.toLowerCase().includes('dub');
+            
+            return {
+                name: `${titleEl?.textContent.trim()}${isDub ? ' (Dub)' : ''}`,
+                url: titleEl?.href?.startsWith('http') ? titleEl.href : `${this.source.baseUrl}${titleEl?.href}`,
+                imageUrl: item.querySelector('img')?.getAttribute('data-src') || item.querySelector('img')?.src,
+                language: isDub ? 'dub' : 'sub'
+            };
+        }).filter(item => item.url && item.name);
+
+        return {
+            list: results,
+            hasNextPage: !!doc.querySelector('.pagination .next')
+        };
+
+    } catch (error) {
+        console.error("Search error:", error);
+        return { list: [], hasNextPage: false };
+    }
+}
     async getDetail(url) {
         try {
             const response = await this.request(url);
