@@ -41,33 +41,10 @@
   "id": 558217177,
   "baseUrl": "https://anix.to",
   "lang": "en",
-  "typeSource": "single",
-  "iconUrl": "https://anix.to/favicon.ico",
-  "dateFormat": "",
-  "dateFormatLocale": "",
   "isNsfw": false,
-  "hasCloudflare": true,
-  "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/main/en/Anix.js",
-  "apiUrl": "",
   "version": "1.0.0",
-  "isManga": false,
   "itemType": 1,
-  "isFullData": false,
-  "appMinVerReq": "1.4.0",
-  "additionalParams": "",
-  "sourceCodeLanguage": 1,
-  "dubSupported": true,
-  "features": {
-    "search": true,
-    "latestUpdates": true,
-    "popular": true,
-    "genreFilter": false,
-    "statusFilter": false
-  },
-  "headers": {
-    "Referer": "https://anix.to/",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
-  }
+  "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/main/en/Anix.js"
 },
 {
   "name":"AllAnime",
