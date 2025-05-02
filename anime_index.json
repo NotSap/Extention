@@ -42,11 +42,14 @@
   "id": 558217177,
   "baseUrl": "https://anix.to",
   "lang": "en",
+  "typeSource": "single",
   "iconUrl": "https://anix.to/favicon.ico",
   "isNsfw": false,
   "version": "1.0.0",
   "itemType": 1,
-  "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/main/en/Anix.js"
+  "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/main/en/Anix.js",
+  "appMinVerReq": "0.5.0",
+  "sourceCodeLanguage": 1
 },
 {
   "name":"AllAnime",
