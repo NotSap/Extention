@@ -1,260 +1,148 @@
+// https://raw.githubusercontent.com/NotSap/Extention/main/en/9animeTV.js
 const mangayomiSources = [{
-    "name": "9animeTV",
-    "lang": "en",
+    "name": "9Anime",
+    "id": 957331416,
     "baseUrl": "https://9animetv.to",
-    "iconUrl": "https://www.google.com/s2/favicons?sz=256&domain=https://9animetv.to",
+    "lang": "en",
     "typeSource": "single",
-    "itemType": 1,
+    "iconUrl": "https://9animetv.to/favicon.ico",
+    "isNsfw": false,
     "version": "1.0.0",
-    "pkgPath": "anime/src/en/9animeTV.js"
+    "itemType": 1,
+    "hasCloudflare": true
 }];
 
-class NineAnimeTV extends MProvider {
-    constructor(source) {
-        super(source);
-        this.client = new Client(source);
+class DefaultExtension extends MProvider {
+    constructor() {
+        super();
+        this.cookies = "";
+        this.retryCount = 3;
     }
 
-    async getPopular(page) {
-        try {
-            const res = await this.client.get(`${this.source.baseUrl}/filter?sort=views&page=${page}`);
-            return this.parseAnimeList(res.body);
-        } catch (e) {
-            console.error("Error in getPopular:", e);
-            return { list: [], hasNextPage: false };
-        }
-    }
-
-    async getLatestUpdates(page) {
-        try {
-            const res = await this.client.get(`${this.source.baseUrl}/filter?sort=recently_updated&page=${page}`);
-            return this.parseAnimeList(res.body);
-        } catch (e) {
-            console.error("Error in getLatestUpdates:", e);
-            return { list: [], hasNextPage: false };
-        }
-    }
-
-    async search(query, page, filterList) {
-        try {
-            let url = `${this.source.baseUrl}/filter?keyword=${encodeURIComponent(query)}&page=${page}`;
-            const res = await this.client.get(url);
-            return this.parseAnimeList(res.body);
-        } catch (e) {
-            console.error("Error in search:", e);
-            return { list: [], hasNextPage: false };
-        }
-    }
-
-    parseAnimeList(html) {
-        const doc = parseHtml(html);
-        const items = doc.select("div.film_list-wrap > div.flw-item");
-        const list = [];
-        
-        items.forEach(item => {
+    async request(url) {
+        for (let i = 0; i <= this.retryCount; i++) {
             try {
-                const titleEl = item.selectFirst("div.film-detail h3.film-name a");
-                const imgEl = item.selectFirst("div.film-poster img");
-                
-                if (titleEl && imgEl) {
-                    list.push({
-                        name: titleEl.text.trim(),
-                        imageUrl: imgEl.getSrc,
-                        link: titleEl.getHref
-                    });
+                const client = new Client();
+                const response = await client.get(url, {
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                        "Referer": this.source.baseUrl,
+                        "Cookie": this.cookies
+                    }
+                });
+
+                // Update cookies if Cloudflare challenge appears
+                if (response.headers["set-cookie"]) {
+                    this.cookies = response.headers["set-cookie"].toString();
                 }
-            } catch (e) {
-                console.error("Error parsing anime item:", e);
+
+                return response;
+            } catch (error) {
+                if (i === this.retryCount) throw error;
+                await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1)));
             }
-        });
-        
-        return { 
-            list, 
-            hasNextPage: items.length > 0 
-        };
+        }
+    }
+
+    async search(query, page, filters) {
+        try {
+            const searchUrl = `${this.source.baseUrl}/filter?keyword=${encodeURIComponent(query)}&page=${page || 1}`;
+            const response = await this.request(searchUrl);
+            const doc = new DOMParser().parseFromString(response.body, "text/html");
+
+            const items = Array.from(doc.querySelectorAll('.film-list .item')).map(item => {
+                const isDub = item.querySelector('.dub') !== null;
+                return {
+                    name: `${item.querySelector('.name').textContent.trim()}${isDub ? ' (Dub)' : ''}`,
+                    url: item.querySelector('a').href,
+                    imageUrl: item.querySelector('img').dataset.src,
+                    language: isDub ? 'dub' : 'sub'
+                };
+            });
+
+            return {
+                list: items,
+                hasNextPage: !!doc.querySelector('.pagination .next')
+            };
+        } catch (error) {
+            console.error("Search failed:", error);
+            return { list: [], hasNextPage: false };
+        }
     }
 
     async getDetail(url) {
         try {
-            const fullUrl = url.startsWith("http") ? url : `${this.source.baseUrl}${url}`;
-            const res = await this.client.get(fullUrl);
-            const doc = parseHtml(res.body);
+            const response = await this.request(url);
+            const doc = new DOMParser().parseFromString(response.body, "text/html");
 
-            const anime = new MManga();
-            anime.title = doc.selectFirst("h2.film-name")?.text.trim() || "No Title";
-            anime.description = doc.selectFirst("div.film-description > div.text")?.text.trim() || "";
-            
-            // Parse status
-            const statusText = doc.selectFirst("div.film-status span")?.text.trim() || "";
-            anime.status = this.parseStatus(statusText);
-            
-            // Parse genres
-            anime.genre = doc.select("div.film-genre a").map(el => el.text.trim());
-            
-            // Parse episodes
-            const episodeElements = doc.select("ul.episodes li a");
-            anime.chapters = episodeElements.map((ep, index) => {
-                const chapter = new MChapter();
-                chapter.name = `Episode ${index + 1}`;
-                chapter.url = ep.getHref;
-                return chapter;
-            });
+            const episodes = Array.from(doc.querySelectorAll('.episode-list a')).map(ep => {
+                const isDub = ep.querySelector('.dub') !== null;
+                return {
+                    num: parseInt(ep.dataset.number),
+                    name: `Episode ${ep.dataset.number}${isDub ? ' (Dub)' : ''}`,
+                    url: ep.href,
+                    scanlator: isDub ? '9Anime-Dub' : '9Anime-Sub'
+                };
+            }).sort((a, b) => b.num - a.num); // Newest first
 
-            return anime;
-        } catch (e) {
-            console.error("Error in getDetail:", e);
-            return new MManga();
+            return {
+                description: doc.querySelector('.description').textContent.trim(),
+                status: doc.querySelector('.status').textContent.includes('Ongoing') ? 0 : 1,
+                genre: Array.from(doc.querySelectorAll('.genre a')).map(g => g.textContent.trim()),
+                episodes
+            };
+        } catch (error) {
+            console.error("Detail fetch failed:", error);
+            return {
+                description: "Failed to load details",
+                status: 5,
+                genre: [],
+                episodes: []
+            };
         }
-    }
-
-    parseStatus(statusText) {
-        const statusMap = {
-            "Ongoing": 0,
-            "Completed": 1,
-            "Upcoming": 2
-        };
-        return statusMap[statusText] || 0;
     }
 
     async getVideoList(url) {
         try {
-            const fullUrl = url.startsWith("http") ? url : `${this.source.baseUrl}${url}`;
-            const res = await this.client.get(fullUrl);
-            const doc = parseHtml(res.body);
+            const response = await this.request(url);
+            const html = response.body;
 
-            const servers = doc.select("div.server-item");
-            const videos = [];
-
-            for (const server of servers) {
-                try {
-                    const serverName = server.text.trim();
-                    const serverId = server.getAttribute("data-id");
-                    const serverType = server.getAttribute("data-type"); // sub or dub
-
-                    // Skip if not preferred server type
-                    if (!this.isPreferredServer(serverName, serverType)) continue;
-
-                    // Get video sources from server
-                    const sourcesRes = await this.client.get(
-                        `${this.source.baseUrl}/ajax/episode/sources?id=${serverId}`,
-                        { headers: { "X-Requested-With": "XMLHttpRequest" } }
-                    );
-                    
-                    const sourcesData = JSON.parse(sourcesRes.body);
-                    if (sourcesData.link) {
-                        const videoSources = await this.extractVideoSources(sourcesData.link, `${serverName} - ${serverType}`);
-                        videos.push(...videoSources);
-                    }
-                } catch (e) {
-                    console.error("Error processing server:", e);
+            // Extract from Vidstream player
+            const videoUrl = html.match(/sources:\s*\[[^\]]*"file":"([^"]+\.mp4)"/)[1];
+            return [{
+                url: videoUrl,
+                quality: "1080p",
+                isM3U8: false,
+                headers: {
+                    "Referer": this.source.baseUrl,
+                    "Origin": "https://9animetv.to"
                 }
-            }
-
-            return this.sortVideos(videos);
-        } catch (e) {
-            console.error("Error in getVideoList:", e);
-            return [];
-        }
-    }
-
-    async extractVideoSources(url, qualityPrefix) {
-        try {
-            const res = await this.client.get(url);
-            const sources = [];
-
-            // Parse HLS or direct video sources
-            if (url.includes(".m3u8")) {
-                // Parse HLS playlist
-                const playlist = res.body.split('\n');
-                for (let i = 0; i < playlist.length; i++) {
-                    if (playlist[i].includes('RESOLUTION=')) {
-                        const resolution = playlist[i].match(/RESOLUTION=(\d+)x(\d+)/)?.[2] || "0";
-                        const videoUrl = playlist[i + 1];
-                        if (videoUrl && !videoUrl.startsWith("#")) {
-                            const video = new MVideo();
-                            video.url = videoUrl;
-                            video.quality = `${qualityPrefix} - ${resolution}p`;
-                            sources.push(video);
-                        }
-                    }
-                }
-            } else {
-                // Direct video source
-                const video = new MVideo();
-                video.url = url;
-                video.quality = `${qualityPrefix} - Default`;
-                sources.push(video);
-            }
-
-            return sources;
+            }];
         } catch (error) {
-            console.error("Error extracting video sources:", error);
+            console.error("Video load failed:", error);
             return [];
         }
     }
 
-    isPreferredServer(serverName, serverType) {
-        const preferredServers = this.preferenceHosterSelection();
-        const preferredTypes = this.preferenceTypeSelection();
-        
-        return preferredServers.some(s => serverName.includes(s)) && 
-               preferredTypes.includes(serverType);
+    // Required methods
+    async getPopular(page) {
+        return this.search("", page);
     }
 
-    sortVideos(videos) {
-        const preferredQuality = this.getPreferenceValue(this.source.id, "preferred_quality") || "1080";
-        return videos.sort((a, b) => {
-            // Sort by preferred quality first
-            const aHasQuality = a.quality.includes(preferredQuality);
-            const bHasQuality = b.quality.includes(preferredQuality);
-            if (aHasQuality && !bHasQuality) return -1;
-            if (!aHasQuality && bHasQuality) return 1;
-            
-            // Then sort by resolution
-            const aRes = parseInt(a.quality.match(/(\d+)p/)?.[1] || "0");
-            const bRes = parseInt(b.quality.match(/(\d+)p/)?.[1] || "0");
-            return bRes - aRes;
-        });
-    }
-
-    preferenceHosterSelection() {
-        return getPreferenceValue(this.source.id, "hoster_selection") || ["Vidstreaming", "Vidcloud"];
-    }
-
-    preferenceTypeSelection() {
-        return getPreferenceValue(this.source.id, "type_selection") || ["sub", "dub"];
+    async getLatestUpdates(page) {
+        const response = await this.request(`${this.source.baseUrl}/latest?page=${page}`);
+        return this.search("", page);
     }
 
     getSourcePreferences() {
-        return [
-            new ListPreference({
-                key: "preferred_quality",
-                title: "Preferred Quality",
-                summary: "",
-                valueIndex: 0,
-                entries: ["1080p", "720p", "480p", "360p"],
-                entryValues: ["1080", "720", "480", "360"]
-            }),
-            new MultiSelectListPreference({
-                key: "hoster_selection",
-                title: "Enable/Disable Hosts",
-                summary: "",
-                entries: ["Vidstreaming", "Vidcloud", "MyCloud", "StreamSB"],
-                entryValues: ["Vidstreaming", "Vidcloud", "MyCloud", "StreamSB"],
-                values: ["Vidstreaming", "Vidcloud"]
-            }),
-            new MultiSelectListPreference({
-                key: "type_selection",
-                title: "Enable/Disable Types",
-                summary: "",
-                entries: ["Sub", "Dub"],
-                entryValues: ["sub", "dub"],
-                values: ["sub", "dub"]
-            })
-        ];
+        return [{
+            key: "preferred_server",
+            listPreference: {
+                title: "Video Server",
+                entries: ["Vidstream", "MyCloud", "StreamSB"],
+                entryValues: ["vidstream", "mycloud", "streamsb"],
+                valueIndex: 0
+            }
+        }];
     }
-}
-
-function main(source) {
-    return new NineAnimeTV(source);
 }
