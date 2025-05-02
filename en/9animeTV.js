@@ -1,4 +1,16 @@
-// https://raw.githubusercontent.com/NotSap/Extention/main/en/9animeTV.js
+const mangayomiSources = [{
+    "name": "9Anime",
+    "id": 957331416,
+    "baseUrl": "https://9animetv.to",
+    "lang": "en",
+    "typeSource": "single",
+    "iconUrl": "https://9animetv.to/favicon.ico",
+    "isNsfw": false,
+    "version": "1.0.0",
+    "itemType": 1,
+    "hasCloudflare": true
+}];
+
 class DefaultExtension extends MProvider {
     constructor() {
         super();
@@ -7,10 +19,10 @@ class DefaultExtension extends MProvider {
     }
 
     async request(url) {
-        for (let i = 0; i <= this.retryCount; i++) {
+        for (var i = 0; i <= this.retryCount; i++) {
             try {
-                const client = new Client();
-                const response = await client.get(url, {
+                var client = new Client();
+                var response = await client.get(url, {
                     headers: {
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                         "Referer": this.source.baseUrl,
@@ -18,68 +30,73 @@ class DefaultExtension extends MProvider {
                     }
                 });
 
-                // Update cookies if Cloudflare challenge appears
-                if (response.headers["set-cookie"]) {
+                if (typeof response.headers["set-cookie"] != "undefined") {
                     this.cookies = response.headers["set-cookie"].toString();
                 }
 
                 return response;
             } catch (error) {
-                if (i === this.retryCount) throw error;
-                await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1)));
+                if (i == this.retryCount) throw error;
+                await new Promise(function(resolve) { 
+                    setTimeout(resolve, 2000 * (i + 1)); 
+                });
             }
         }
     }
 
     async search(query, page, filters) {
         try {
-            const searchUrl = `${this.source.baseUrl}/filter?keyword=${encodeURIComponent(query)}&page=${page || 1}`;
-            const response = await this.request(searchUrl);
-            const doc = new DOMParser().parseFromString(response.body, "text/html");
+            var searchUrl = this.source.baseUrl + "/filter?keyword=" + encodeURIComponent(query) + "&page=" + (page || 1);
+            var response = await this.request(searchUrl);
+            var doc = new DOMParser().parseFromString(response.body, "text/html");
+            var items = Array.from(doc.querySelectorAll('.film-list .item'));
 
-            const items = Array.from(doc.querySelectorAll('.film-list .item')).map(item => {
-                const isDub = item.querySelector('.dub') !== null;
+            var results = items.map(function(item) {
+                var isDub = item.querySelector('.dub') != null;
                 return {
-                    name: `${item.querySelector('.name').textContent.trim()}${isDub ? ' (Dub)' : ''}`,
+                    name: item.querySelector('.name').textContent.trim() + (isDub ? ' (Dub)' : ''),
                     url: item.querySelector('a').href,
-                    imageUrl: item.querySelector('img').dataset.src,
+                    imageUrl: item.querySelector('img').getAttribute('data-src'),
                     language: isDub ? 'dub' : 'sub'
                 };
             });
 
             return {
-                list: items,
-                hasNextPage: !!doc.querySelector('.pagination .next')
+                list: results,
+                hasNextPage: doc.querySelector('.pagination .next') != null
             };
         } catch (error) {
-            console.error("Search failed:", error);
+            console.log("Search error:", error);
             return { list: [], hasNextPage: false };
         }
     }
 
     async getDetail(url) {
         try {
-            const response = await this.request(url);
-            const doc = new DOMParser().parseFromString(response.body, "text/html");
+            var response = await this.request(url);
+            var doc = new DOMParser().parseFromString(response.body, "text/html");
+            var episodeItems = Array.from(doc.querySelectorAll('.episode-list a'));
 
-            const episodes = Array.from(doc.querySelectorAll('.episode-list a')).map(ep => {
-                const isDub = ep.querySelector('.dub') !== null;
+            var episodes = episodeItems.map(function(ep, index) {
+                var isDub = ep.querySelector('.dub') != null;
                 return {
-                    num: parseInt(ep.dataset.number),
-                    name: `Episode ${ep.dataset.number}${isDub ? ' (Dub)' : ''}`,
+                    num: index + 1,
+                    name: 'Episode ' + (index + 1) + (isDub ? ' (Dub)' : ''),
                     url: ep.href,
                     scanlator: isDub ? '9Anime-Dub' : '9Anime-Sub'
                 };
-            }).sort((a, b) => b.num - a.num); // Newest first
+            }).reverse(); // Newest first
 
             return {
                 description: doc.querySelector('.description').textContent.trim(),
-                status: doc.querySelector('.status').textContent.includes('Ongoing') ? 0 : 1,
-                genre: Array.from(doc.querySelectorAll('.genre a')).map(g => g.textContent.trim()),
-                episodes
+                status: doc.querySelector('.status').textContent.indexOf('Ongoing') >= 0 ? 0 : 1,
+                genre: Array.from(doc.querySelectorAll('.genre a')).map(function(g) { 
+                    return g.textContent.trim(); 
+                }),
+                episodes: episodes
             };
         } catch (error) {
-            console.error("Detail fetch failed:", error);
+            console.log("Detail error:", error);
             return {
                 description: "Failed to load details",
                 status: 5,
@@ -91,33 +108,33 @@ class DefaultExtension extends MProvider {
 
     async getVideoList(url) {
         try {
-            const response = await this.request(url);
-            const html = response.body;
+            var response = await this.request(url);
+            var html = response.body;
+            var videoMatch = html.match(/sources:\s*\[[^\]]*"file":"([^"]+\.mp4)"/);
 
-            // Extract from Vidstream player
-            const videoUrl = html.match(/sources:\s*\[[^\]]*"file":"([^"]+\.mp4)"/)[1];
-            return [{
-                url: videoUrl,
-                quality: "1080p",
-                isM3U8: false,
-                headers: {
-                    "Referer": this.source.baseUrl,
-                    "Origin": "https://9animetv.to"
-                }
-            }];
+            if (videoMatch && videoMatch[1]) {
+                return [{
+                    url: videoMatch[1],
+                    quality: "1080p",
+                    isM3U8: false,
+                    headers: {
+                        "Referer": this.source.baseUrl
+                    }
+                }];
+            }
+            throw new Error("No video found");
         } catch (error) {
-            console.error("Video load failed:", error);
+            console.log("Video error:", error);
             return [];
         }
     }
 
-    // Required methods
     async getPopular(page) {
         return this.search("", page);
     }
 
     async getLatestUpdates(page) {
-        const response = await this.request(`${this.source.baseUrl}/latest?page=${page}`);
+        var response = await this.request(this.source.baseUrl + "/latest?page=" + page);
         return this.search("", page);
     }
 
