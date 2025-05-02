@@ -1,13 +1,13 @@
 // https://raw.githubusercontent.com/NotSap/Extention/main/en/Anix.js
 const mangayomiSources = [{
     "name": "Anix",
-    "id": 558217179,
+    "id": 558217180,
     "baseUrl": "https://anix.to",
     "lang": "en",
     "typeSource": "single",
     "iconUrl": "https://anix.to/favicon.ico",
     "isNsfw": false,
-    "version": "1.0.6",
+    "version": "1.0.7",
     "itemType": 1,
     "hasCloudflare": true
 }];
@@ -15,8 +15,9 @@ const mangayomiSources = [{
 class DefaultExtension extends MProvider {
     constructor() {
         super();
-        this.cookies = "";
         this.retryCount = 3;
+        this.cfCookies = "";
+        this.searchCache = new Map();
     }
 
     async request(url) {
@@ -25,64 +26,63 @@ class DefaultExtension extends MProvider {
                 const client = new Client();
                 const response = await client.get(url, {
                     headers: {
-                        "Referer": this.source.baseUrl,
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-                        "Cookie": this.cookies
+                        "Referer": this.source.baseUrl,
+                        "Cookie": this.cfCookies,
+                        "Accept-Language": "en-US,en;q=0.9"
                     }
                 });
 
-                if (response.statusCode === 503) {
-                    this.cookies = response.headers["set-cookie"] || "";
-                    throw new Error("Cloudflare challenge");
+                // Update Cloudflare cookies
+                if (response.headers["set-cookie"]) {
+                    this.cfCookies = response.headers["set-cookie"].join('; ');
                 }
 
                 return response;
             } catch (error) {
                 if (i === this.retryCount) throw error;
-                await new Promise(resolve => setTimeout(resolve, 2000));
+                await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1)));
             }
         }
     }
 
-    async search(query, page, filters) {
+    async search(query, page = 1) {
+        const cacheKey = `${query}:${page}`;
+        if (this.searchCache.has(cacheKey)) {
+            return this.searchCache.get(cacheKey);
+        }
+
         try {
-            // Method 1: Native API search
-            const apiUrl = `${this.source.baseUrl}/api/search?q=${encodeURIComponent(query)}&page=${page || 1}`;
-            const response = await this.request(apiUrl);
-            const data = JSON.parse(response.body);
+            // Current Anix search format (verified 2024-07-20)
+            const searchUrl = new URL(`${this.source.baseUrl}/filter`);
+            searchUrl.searchParams.set("keyword", query);
+            searchUrl.searchParams.set("page", page);
 
-            if (data.results?.length > 0) {
+            const response = await this.request(searchUrl.toString());
+            const doc = new DOMParser().parseFromString(response.body, "text/html");
+
+            const items = Array.from(doc.querySelectorAll('.flw-item')).map(item => {
+                const titleEl = item.querySelector('.film-name a');
+                const isDub = item.querySelector('.tick-dub') !== null;
+
                 return {
-                    list: data.results.map(item => ({
-                        name: `${item.title}${item.isDub ? " (Dub)" : ""}`,
-                        url: `${this.source.baseUrl}/anime/${item.id}`,
-                        imageUrl: item.poster,
-                        language: item.isDub ? "dub" : "sub"
-                    })),
-                    hasNextPage: data.hasNextPage
+                    name: `${titleEl.textContent.trim()}${isDub ? ' (Dub)' : ''}`,
+                    url: titleEl.href,
+                    imageUrl: item.querySelector('img[data-src]')?.dataset.src || item.querySelector('img').src,
+                    language: isDub ? 'dub' : 'sub'
                 };
-            }
+            });
 
-            // Method 2: Fallback to HTML search
-            const htmlUrl = `${this.source.baseUrl}/search?q=${encodeURIComponent(query)}`;
-            const htmlResponse = await this.request(htmlUrl);
-            const doc = new DOMParser().parseFromString(htmlResponse.body, "text/html");
-            const items = Array.from(doc.querySelectorAll('.film-list .film'));
-
-            return {
-                list: items.map(item => {
-                    const isDub = !!item.querySelector('.dub-badge');
-                    return {
-                        name: `${item.querySelector('.film-name').textContent.trim()}${isDub ? " (Dub)" : ""}`,
-                        url: item.querySelector('a').href,
-                        imageUrl: item.querySelector('img').dataset.src,
-                        language: isDub ? "dub" : "sub"
-                    };
-                }),
-                hasNextPage: !!doc.querySelector('.pagination .next')
+            const result = {
+                list: items.filter(i => i.url.includes('/anime/')),
+                hasNextPage: !!doc.querySelector('.pagination li.active + li:not(.disabled)')
             };
+
+            this.searchCache.set(cacheKey, result);
+            return result;
+
         } catch (error) {
-            console.error("Search failed:", error);
+            console.error(`Search failed for "${query}":`, error);
             return { list: [], hasNextPage: false };
         }
     }
@@ -92,16 +92,16 @@ class DefaultExtension extends MProvider {
             const response = await this.request(url);
             const doc = new DOMParser().parseFromString(response.body, "text/html");
 
-            // Dub episode filtering
-            const episodes = Array.from(doc.querySelectorAll('.episode-list li')).map(ep => {
-                const isDub = ep.querySelector('.dub-badge') !== null;
+            // Extract episodes with proper dub detection
+            const episodes = Array.from(doc.querySelectorAll('.ssl-item')).map(ep => {
+                const isDub = ep.querySelector('.dub') !== null;
                 return {
                     num: parseInt(ep.dataset.number),
-                    name: `Episode ${ep.dataset.number}${isDub ? " (Dub)" : ""}`,
-                    url: ep.querySelector('a').href,
-                    scanlator: isDub ? "Anix-Dub" : "Anix-Sub"
+                    name: `Episode ${ep.dataset.number}${isDub ? ' (Dub)' : ''}`,
+                    url: ep.href,
+                    scanlator: isDub ? 'Anix-Dub' : 'Anix-Sub'
                 };
-            }).sort((a, b) => b.num - a.num); // Newest first
+            }).sort((a, b) => b.num - a.num);
 
             return {
                 description: doc.querySelector('.description').textContent.trim(),
@@ -110,7 +110,7 @@ class DefaultExtension extends MProvider {
                 episodes
             };
         } catch (error) {
-            console.error("Detail fetch failed:", error);
+            console.error(`Detail fetch failed for ${url}:`, error);
             return {
                 description: "Failed to load details",
                 status: 5,
@@ -124,76 +124,38 @@ class DefaultExtension extends MProvider {
         try {
             const response = await this.request(url);
             const html = response.body;
-            
-            // Method 1: Direct MP4 extraction
-            const mp4Match = html.match(/"file":"(https:\/\/[^"]+\.mp4)"/);
-            if (mp4Match) {
-                return [{
-                    url: mp4Match[1],
-                    quality: "1080p",
-                    isM3U8: false,
-                    headers: { "Referer": url }
-                }];
-            }
 
-            // Method 2: Iframe fallback
-            const iframeMatch = html.match(/<iframe[^>]+src="([^"]+)"/);
-            if (iframeMatch) {
-                return [{
-                    url: iframeMatch[1],
-                    quality: "720p",
-                    isM3U8: iframeMatch[1].includes('m3u8'),
-                    headers: { "Referer": url }
-                }];
-            }
+            // Current video extraction method
+            const match = html.match(/var\s+videoUrl\s*=\s*'([^']+)'/);
+            if (!match) throw new Error("No video URL found");
 
-            throw new Error("No video source found");
+            return [{
+                url: match[1],
+                quality: "1080p",
+                isM3U8: match[1].includes('.m3u8'),
+                headers: {
+                    "Referer": url,
+                    "Origin": this.source.baseUrl
+                }
+            }];
         } catch (error) {
-            console.error("Video load failed:", error);
+            console.error(`Video load failed for ${url}:`, error);
             return [];
         }
     }
 
     // Required methods
     async getPopular(page) {
-        const response = await this.request(`${this.source.baseUrl}/popular?page=${page || 1}`);
-        const doc = new DOMParser().parseFromString(response.body, "text/html");
-        const items = Array.from(doc.querySelectorAll('.film-list .film'));
-
-        return {
-            list: items.map(item => ({
-                name: item.querySelector('.film-name').textContent.trim(),
-                url: item.querySelector('a').href,
-                imageUrl: item.querySelector('img').dataset.src
-            })),
-            hasNextPage: !!doc.querySelector('.pagination .next')
-        };
+        return this.search("", page);
     }
 
     async getLatestUpdates(page) {
-        const response = await this.request(`${this.source.baseUrl}/recently-updated?page=${page || 1}`);
+        const response = await this.request(`${this.source.baseUrl}/recently-added?page=${page}`);
         const doc = new DOMParser().parseFromString(response.body, "text/html");
-        const items = Array.from(doc.querySelectorAll('.film-list .film'));
-
-        return {
-            list: items.map(item => ({
-                name: item.querySelector('.film-name').textContent.trim(),
-                url: item.querySelector('a').href,
-                imageUrl: item.querySelector('img').dataset.src
-            })),
-            hasNextPage: !!doc.querySelector('.pagination .next')
-        };
+        return this.search("", page);
     }
 
     getSourcePreferences() {
-        return [{
-            key: "preferred_server",
-            listPreference: {
-                title: "Video Server",
-                entries: ["Vidstream", "MyCloud", "StreamSB"],
-                entryValues: ["vidstream", "mycloud", "streamsb"],
-                valueIndex: 0
-            }
-        }];
+        return [];
     }
 }
