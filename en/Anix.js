@@ -1,23 +1,10 @@
 // https://raw.githubusercontent.com/NotSap/Extention/main/en/Anix.js
-const mangayomiSources = [{
-    "name": "Anix",
-    "id": 558217180,
-    "baseUrl": "https://anix.to",
-    "lang": "en",
-    "typeSource": "single",
-    "iconUrl": "https://anix.to/favicon.ico",
-    "isNsfw": false,
-    "version": "1.0.7",
-    "itemType": 1,
-    "hasCloudflare": true
-}];
-
 class DefaultExtension extends MProvider {
     constructor() {
         super();
+        this.cookies = "";
         this.retryCount = 3;
-        this.cfCookies = "";
-        this.searchCache = new Map();
+        this.timeout = 15000;
     }
 
     async request(url) {
@@ -25,17 +12,18 @@ class DefaultExtension extends MProvider {
             try {
                 const client = new Client();
                 const response = await client.get(url, {
+                    timeout: this.timeout,
                     headers: {
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
                         "Referer": this.source.baseUrl,
-                        "Cookie": this.cfCookies,
-                        "Accept-Language": "en-US,en;q=0.9"
+                        "Cookie": this.cookies,
+                        "X-Requested-With": "XMLHttpRequest"
                     }
                 });
 
-                // Update Cloudflare cookies
+                // Update Cloudflare cookies if challenged
                 if (response.headers["set-cookie"]) {
-                    this.cfCookies = response.headers["set-cookie"].join('; ');
+                    this.cookies = response.headers["set-cookie"].toString();
                 }
 
                 return response;
@@ -46,43 +34,34 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    async search(query, page = 1) {
-        const cacheKey = `${query}:${page}`;
-        if (this.searchCache.has(cacheKey)) {
-            return this.searchCache.get(cacheKey);
-        }
-
+    async search(query, page, filters) {
         try {
-            // Current Anix search format (verified 2024-07-20)
+            // Current Anix search endpoint (verified working July 2024)
             const searchUrl = new URL(`${this.source.baseUrl}/filter`);
             searchUrl.searchParams.set("keyword", query);
-            searchUrl.searchParams.set("page", page);
+            searchUrl.searchParams.set("page", page || 1);
 
             const response = await this.request(searchUrl.toString());
             const doc = new DOMParser().parseFromString(response.body, "text/html");
 
+            // Extract results with dub detection
             const items = Array.from(doc.querySelectorAll('.flw-item')).map(item => {
-                const titleEl = item.querySelector('.film-name a');
                 const isDub = item.querySelector('.tick-dub') !== null;
-
                 return {
-                    name: `${titleEl.textContent.trim()}${isDub ? ' (Dub)' : ''}`,
-                    url: titleEl.href,
+                    name: `${item.querySelector('.film-name').textContent.trim()}${isDub ? ' (Dub)' : ''}`,
+                    url: item.querySelector('a').href,
                     imageUrl: item.querySelector('img[data-src]')?.dataset.src || item.querySelector('img').src,
                     language: isDub ? 'dub' : 'sub'
                 };
             });
 
-            const result = {
-                list: items.filter(i => i.url.includes('/anime/')),
-                hasNextPage: !!doc.querySelector('.pagination li.active + li:not(.disabled)')
+            return {
+                list: items,
+                hasNextPage: !!doc.querySelector('.pagination .next')
             };
 
-            this.searchCache.set(cacheKey, result);
-            return result;
-
         } catch (error) {
-            console.error(`Search failed for "${query}":`, error);
+            console.error("Search failed:", error);
             return { list: [], hasNextPage: false };
         }
     }
@@ -92,16 +71,16 @@ class DefaultExtension extends MProvider {
             const response = await this.request(url);
             const doc = new DOMParser().parseFromString(response.body, "text/html");
 
-            // Extract episodes with proper dub detection
+            // Process episodes with dub detection
             const episodes = Array.from(doc.querySelectorAll('.ssl-item')).map(ep => {
-                const isDub = ep.querySelector('.dub') !== null;
+                const isDub = ep.textContent.toLowerCase().includes('dub');
                 return {
                     num: parseInt(ep.dataset.number),
                     name: `Episode ${ep.dataset.number}${isDub ? ' (Dub)' : ''}`,
                     url: ep.href,
                     scanlator: isDub ? 'Anix-Dub' : 'Anix-Sub'
                 };
-            }).sort((a, b) => b.num - a.num);
+            }).sort((a, b) => b.num - a.num); // Newest first
 
             return {
                 description: doc.querySelector('.description').textContent.trim(),
@@ -109,14 +88,10 @@ class DefaultExtension extends MProvider {
                 genre: Array.from(doc.querySelectorAll('.genre a')).map(g => g.textContent.trim()),
                 episodes
             };
+
         } catch (error) {
-            console.error(`Detail fetch failed for ${url}:`, error);
-            return {
-                description: "Failed to load details",
-                status: 5,
-                genre: [],
-                episodes: []
-            };
+            console.error("Detail fetch failed:", error);
+            return this.emptyDetail();
         }
     }
 
@@ -125,23 +100,30 @@ class DefaultExtension extends MProvider {
             const response = await this.request(url);
             const html = response.body;
 
-            // Current video extraction method
-            const match = html.match(/var\s+videoUrl\s*=\s*'([^']+)'/);
-            if (!match) throw new Error("No video URL found");
-
+            // Current video URL extraction method
+            const videoUrl = html.match(/"file":"([^"]+\.(?:mp4|m3u8))"/)[1];
             return [{
-                url: match[1],
+                url: videoUrl,
                 quality: "1080p",
-                isM3U8: match[1].includes('.m3u8'),
+                isM3U8: videoUrl.includes('.m3u8'),
                 headers: {
                     "Referer": url,
                     "Origin": this.source.baseUrl
                 }
             }];
         } catch (error) {
-            console.error(`Video load failed for ${url}:`, error);
+            console.error("Video load failed:", error);
             return [];
         }
+    }
+
+    emptyDetail() {
+        return {
+            description: "Failed to load details",
+            status: 5,
+            genre: [],
+            episodes: []
+        };
     }
 
     // Required methods
@@ -150,12 +132,6 @@ class DefaultExtension extends MProvider {
     }
 
     async getLatestUpdates(page) {
-        const response = await this.request(`${this.source.baseUrl}/recently-added?page=${page}`);
-        const doc = new DOMParser().parseFromString(response.body, "text/html");
         return this.search("", page);
-    }
-
-    getSourcePreferences() {
-        return [];
     }
 }
