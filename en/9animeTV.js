@@ -1,169 +1,157 @@
-const mangayomiSources = [{
-    "name": "9Anime",
-    "id": 957331416,
-    "baseUrl": "https://9animetv.to",
-    "lang": "en",
-    "typeSource": "single",
-    "iconUrl": "https://9animetv.to/favicon.ico",
-    "isNsfw": false,
-    "version": "1.0.0",
-    "itemType": 1,
-    "hasCloudflare": false
-}];
+class NineAnimeTVExtension extends MProvider {
+  constructor() {
+    super();
+    this.headers = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      "Referer": "https://9animetv.to/",
+      "X-Requested-With": "XMLHttpRequest"
+    };
+  }
 
-function DefaultExtension() {
-    MProvider.call(this);
-    this.cookies = "";
-    this.retryCount = 3;
+  async search(query, page = 1, filters) {
+    try {
+      let url;
+      if (query === "popular") {
+        url = `${this.baseUrl}/popular?page=${page}`;
+      } else if (query === "latest") {
+        url = `${this.baseUrl}/latest?page=${page}`;
+      } else {
+        url = `${this.baseUrl}/search?keyword=${encodeURIComponent(query)}&page=${page}`;
+      }
+
+      const client = new Client();
+      const response = await client.get(url, { headers: this.headers });
+      const doc = new DOMParser().parseFromString(response.body, "text/html");
+
+      const items = Array.from(doc.querySelectorAll('.film_list-wrap .flw-item')).map(item => {
+        const titleEl = item.querySelector('.film-name a');
+        const imgEl = item.querySelector('img');
+        const isDub = item.querySelector('.tick-dub') !== null || /dub/i.test(titleEl?.textContent || '');
+
+        return {
+          name: `${titleEl?.textContent.trim()}${isDub ? ' (Dub)' : ''}`,
+          url: `${this.baseUrl}${titleEl?.getAttribute('href')}`,
+          imageUrl: imgEl?.getAttribute('data-src') || imgEl?.getAttribute('src') || '',
+          language: isDub ? 'dub' : 'sub'
+        };
+      }).filter(item => item.name && item.url);
+
+      const hasNextPage = doc.querySelector('.pagination .page-item:last-child:not(.active)') !== null;
+
+      return {
+        list: items,
+        hasNextPage
+      };
+    } catch (error) {
+      console.error("Search error:", error);
+      return { list: [], hasNextPage: false };
+    }
+  }
+
+  async getDetail(url) {
+    try {
+      const client = new Client();
+      const response = await client.get(url, { headers: this.headers });
+      const doc = new DOMParser().parseFromString(response.body, "text/html");
+
+      // Extract only dubbed episodes
+      const episodes = Array.from(doc.querySelectorAll('.episode-list .ep-item')).map(ep => {
+        const isDub = ep.querySelector('.dub') !== null || /dub/i.test(ep.textContent || '');
+        if (!isDub) return null;
+
+        const epLink = ep.querySelector('a');
+        const epNum = epLink.getAttribute('data-number') || epLink.textContent.match(/\d+/)?.[0] || 0;
+        
+        return {
+          num: parseInt(epNum),
+          name: `Episode ${epNum} (Dub)`,
+          url: `${this.baseUrl}${epLink.getAttribute('href')}`,
+          scanlator: '9AnimeTV'
+        };
+      }).filter(Boolean).reverse();
+
+      return {
+        description: doc.querySelector('.description')?.textContent.trim() || 'No description available',
+        status: doc.querySelector('.anisc-info .item')?.textContent.includes('Ongoing') ? 0 : 1,
+        genre: Array.from(doc.querySelectorAll('.anisc-info a[href*="/genre/"]')).map(g => g.textContent.trim()),
+        episodes
+      };
+    } catch (error) {
+      console.error("Detail error:", error);
+      return {
+        description: "Failed to load details",
+        status: 5,
+        genre: [],
+        episodes: []
+      };
+    }
+  }
+
+  async getVideoList(url) {
+    try {
+      const client = new Client();
+      
+      // 1. Get episode page
+      const epResponse = await client.get(url, { headers: this.headers });
+      const epDoc = new DOMParser().parseFromString(epResponse.body, "text/html");
+      
+      // 2. Extract server list
+      const serverList = Array.from(epDoc.querySelectorAll('.server-list .server-item')).map(server => {
+        return {
+          name: server.getAttribute('data-server-id') || 'default',
+          url: `${this.baseUrl}${server.querySelector('a').getAttribute('href')}`
+        };
+      });
+
+      // 3. Try each server until we find a working one
+      for (const server of serverList) {
+        try {
+          const serverResponse = await client.get(server.url, { headers: this.headers });
+          const serverData = JSON.parse(serverResponse.body);
+          const serverDoc = new DOMParser().parseFromString(serverData.html, "text/html");
+          
+          // 4. Extract iframe URL
+          const iframe = serverDoc.querySelector('iframe');
+          if (!iframe) continue;
+          
+          const iframeUrl = iframe.getAttribute('src');
+          if (!iframeUrl.includes('http')) continue;
+          
+          // 5. Get final player page
+          const iframeResponse = await client.get(iframeUrl, { 
+            headers: { ...this.headers, Referer: url } 
+          });
+          
+          // 6. Extract m3u8 URL
+          const m3u8Match = iframeResponse.body.match(/file:"([^"]+\.m3u8)"/);
+          if (m3u8Match) {
+            return [{
+              url: m3u8Match[1].replace(/\\\//g, '/'),
+              quality: "Auto",
+              isM3U8: true,
+              headers: { 
+                "Referer": iframeUrl,
+                "Origin": this.baseUrl
+              }
+            }];
+          }
+        } catch (e) {
+          console.log(`Server ${server.name} failed, trying next`);
+        }
+      }
+      
+      return [];
+    } catch (error) {
+      console.error("Video error:", error);
+      return [];
+    }
+  }
+
+  async getPopular(page) {
+    return this.search("popular", page);
+  }
+
+  async getLatestUpdates(page) {
+    return this.search("latest", page);
+  }
 }
-
-DefaultExtension.prototype = Object.create(MProvider.prototype);
-DefaultExtension.prototype.constructor = DefaultExtension;
-
-DefaultExtension.prototype.request = function(url) {
-    var self = this;
-    return new Promise(function(resolve, reject) {
-        function attempt(i) {
-            try {
-                var client = new Client();
-                client.get(url, {
-                    headers: {
-                        "User-Agent": "Mozilla/5.0",
-                        "Referer": self.source.baseUrl,
-                        "Cookie": self.cookies
-                    }
-                }).then(function(response) {
-                    if (response.headers["set-cookie"]) {
-                        self.cookies = response.headers["set-cookie"].toString();
-                    }
-                    resolve(response);
-                }).catch(function(error) {
-                    if (i >= self.retryCount) {
-                        reject(error);
-                    } else {
-                        setTimeout(function() {
-                            attempt(i + 1);
-                        }, 2000);
-                    }
-                });
-            } catch (error) {
-                reject(error);
-            }
-        }
-        attempt(0);
-    });
-};
-
-DefaultExtension.prototype.search = function(query, page, filters) {
-    var self = this;
-    return new Promise(function(resolve) {
-        self.request(self.source.baseUrl + "/filter?keyword=" + encodeURIComponent(query) + "&page=" + (page || 1))
-            .then(function(response) {
-                var doc = new DOMParser().parseFromString(response.body, "text/html");
-                var items = Array.from(doc.querySelectorAll('.film-list .item'));
-                var results = items.map(function(item) {
-                    var isDub = item.querySelector('.dub') != null;
-                    return {
-                        name: item.querySelector('.name').textContent.trim() + (isDub ? ' (Dub)' : ''),
-                        url: item.querySelector('a').href,
-                        imageUrl: item.querySelector('img').getAttribute('data-src'),
-                        language: isDub ? 'dub' : 'sub'
-                    };
-                });
-                resolve({
-                    list: results,
-                    hasNextPage: doc.querySelector('.pagination .next') != null
-                });
-            })
-            .catch(function(error) {
-                console.log("Search error:", error);
-                resolve({ list: [], hasNextPage: false });
-            });
-    });
-};
-
-DefaultExtension.prototype.getDetail = function(url) {
-    var self = this;
-    return new Promise(function(resolve) {
-        self.request(url).then(function(response) {
-            var doc = new DOMParser().parseFromString(response.body, "text/html");
-            var episodeItems = Array.from(doc.querySelectorAll('.episode-list a'));
-            var episodes = episodeItems.map(function(ep, index) {
-                var isDub = ep.querySelector('.dub') != null;
-                return {
-                    num: index + 1,
-                    name: 'Episode ' + (index + 1) + (isDub ? ' (Dub)' : ''),
-                    url: ep.href,
-                    scanlator: isDub ? '9Anime-Dub' : '9Anime-Sub'
-                };
-            }).reverse();
-
-            resolve({
-                description: doc.querySelector('.description').textContent.trim(),
-                status: doc.querySelector('.status').textContent.indexOf('Ongoing') >= 0 ? 0 : 1,
-                genre: Array.from(doc.querySelectorAll('.genre a')).map(function(g) {
-                    return g.textContent.trim();
-                }),
-                episodes: episodes
-            });
-        }).catch(function(error) {
-            console.log("Detail error:", error);
-            resolve({
-                description: "Failed to load details",
-                status: 5,
-                genre: [],
-                episodes: []
-            });
-        });
-    });
-};
-
-DefaultExtension.prototype.getVideoList = function(url) {
-    var self = this;
-    return new Promise(function(resolve) {
-        self.request(url).then(function(response) {
-            var html = response.body;
-            var videoMatch = html.match(/sources:\s*\[[^\]]*"file":"([^"]+\.mp4)"/);
-            if (videoMatch && videoMatch[1]) {
-                resolve([{
-                    url: videoMatch[1],
-                    quality: "1080p",
-                    isM3U8: false,
-                    headers: {
-                        "Referer": self.source.baseUrl
-                    }
-                }]);
-            } else {
-                resolve([]);
-            }
-        }).catch(function(error) {
-            console.log("Video error:", error);
-            resolve([]);
-        });
-    });
-};
-
-DefaultExtension.prototype.getPopular = function(page) {
-    return this.search("", page);
-};
-
-DefaultExtension.prototype.getLatestUpdates = function(page) {
-    var self = this;
-    return new Promise(function(resolve) {
-        self.request(self.source.baseUrl + "/latest?page=" + page).then(function() {
-            resolve(self.search("", page));
-        });
-    });
-};
-
-DefaultExtension.prototype.getSourcePreferences = function() {
-    return [{
-        key: "preferred_server",
-        listPreference: {
-            title: "Video Server",
-            entries: ["Vidstream", "MyCloud", "StreamSB"],
-            entryValues: ["vidstream", "mycloud", "streamsb"],
-            valueIndex: 0
-        }
-    }];
-};
