@@ -38,19 +38,18 @@
     "sourceCodeLanguage":0
   }, 
 {
-  "name": "Anix",
-  "id": 558217177,
-  "baseUrl": "https://anix.to",
-  "lang": "en",
-  "typeSource": "single",
-  "iconUrl": "https://anix.to/favicon.ico",
-  "isNsfw": false,
-  "version": "1.0.1",
-  "isManga": false,
-  "itemType": 1,
-  "hasCloudflare": true,
-  "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/main/en/Anix.js",
-  "sourceCodeLanguage": 1
+    "name": "Gojo",
+    "id": 558217199,
+    "baseUrl": "https://gojo.wtf",
+    "lang": "en",
+    "typeSource": "single",
+    "iconUrl": "https://gojo.wtf/favicon.ico",
+    "isNsfw": false,
+    "version": "1.0.0",
+    "itemType": 1,
+    "hasCloudflare": true,
+    "sourceCodeUrl": "https://raw.githubusercontent.com/NotSap/Extention/main/en/Gojo.js",
+    "sourceCodeLanguage": 1
 },
 {
   "name":"AllAnime",
