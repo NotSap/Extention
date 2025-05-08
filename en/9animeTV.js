@@ -9,7 +9,7 @@ const mangayomiSources = [{
   "dateFormatLocale": "",
   "isNsfw": false,
   "hasCloudflare": false,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "isManga": false,
   "itemType": 1,
   "isFullData": false,
@@ -27,7 +27,7 @@ class DefaultExtension extends MProvider {
 
   async search(query, page) {
     try {
-      let url;
+      var url;
       if (query == "popular") {
         url = this.baseUrl + "/popular?page=" + page;
       } else if (query == "latest") {
@@ -36,19 +36,18 @@ class DefaultExtension extends MProvider {
         url = this.baseUrl + "/search?keyword=" + encodeURIComponent(query) + "&page=" + page;
       }
 
-      const client = new Client();
-      const response = await client.get(url, { headers: this.headers });
-      const doc = new DOMParser().parseFromString(response.body, "text/html");
+      var client = new Client();
+      var response = await client.get(url, { headers: this.headers });
+      var doc = new DOMParser().parseFromString(response.body, "text/html");
 
-      const items = [];
-      const elements = doc.querySelectorAll('.film_list-wrap .flw-item');
-      for (let i = 0; i < elements.length; i++) {
-        const item = elements[i];
-        const titleEl = item.querySelector('.film-name a');
-        const imgEl = item.querySelector('img');
-        const isDub = item.querySelector('.tick-dub') != null || /dub/i.test(titleEl ? titleEl.textContent : '');
-
-        if (titleEl && titleEl.href) {
+      var items = [];
+      var elements = doc.querySelectorAll('.film_list-wrap .flw-item');
+      for (var i = 0; i < elements.length; i++) {
+        var item = elements[i];
+        var titleEl = item.querySelector('.film-name a');
+        var imgEl = item.querySelector('img');
+        var isDub = item.querySelector('.tick-dub') != null;
+        if (titleEl && titleEl.getAttribute('href')) {
           items.push({
             name: (titleEl.textContent.trim() || 'Untitled') + (isDub ? ' (Dub)' : ''),
             url: this.baseUrl + titleEl.getAttribute('href'),
@@ -70,24 +69,24 @@ class DefaultExtension extends MProvider {
 
   async getDetail(url) {
     try {
-      const client = new Client();
-      const response = await client.get(url, { headers: this.headers });
-      const doc = new DOMParser().parseFromString(response.body, "text/html");
+      var client = new Client();
+      var response = await client.get(url, { headers: this.headers });
+      var doc = new DOMParser().parseFromString(response.body, "text/html");
 
-      const episodes = [];
-      const epElements = doc.querySelectorAll('.episode-list .ep-item');
-      for (let i = 0; i < epElements.length; i++) {
-        const ep = epElements[i];
-        const isDub = ep.querySelector('.dub') != null || /dub/i.test(ep.textContent || '');
+      var episodes = [];
+      var epElements = doc.querySelectorAll('.episode-list .ep-item');
+      for (var i = 0; i < epElements.length; i++) {
+        var ep = epElements[i];
+        var isDub = ep.querySelector('.dub') != null;
         if (!isDub) continue;
 
-        const epLink = ep.querySelector('a');
+        var epLink = ep.querySelector('a');
         if (!epLink) continue;
 
-        const epNum = epLink.getAttribute('data-number') || epLink.textContent.match(/\d+/);
+        var epNumMatch = epLink.textContent.match(/\d+/);
         episodes.push({
-          num: parseInt(epNum ? epNum[0] : 0),
-          name: "Episode " + (epNum ? epNum[0] : 0) + " (Dub)",
+          num: epNumMatch ? parseInt(epNumMatch[0]) : 0,
+          name: "Episode " + (epNumMatch ? epNumMatch[0] : "0") + " (Dub)",
           url: this.baseUrl + epLink.getAttribute('href'),
           scanlator: "9AnimeTV"
         });
@@ -112,12 +111,11 @@ class DefaultExtension extends MProvider {
 
   async getVideoList(url) {
     try {
-      const client = new Client();
-      const response = await client.get(url, { headers: this.headers });
-      const html = response.body;
+      var client = new Client();
+      var response = await client.get(url, { headers: this.headers });
+      var html = response.body;
 
-      // First try to find m3u8 URL
-      const m3u8Match = html.match(/"file":"([^"]+\.m3u8)"/);
+      var m3u8Match = html.match(/"file":"([^"]+\.m3u8)"/);
       if (m3u8Match) {
         return [{
           url: m3u8Match[1].replace(/\\\//g, '/'),
@@ -127,8 +125,7 @@ class DefaultExtension extends MProvider {
         }];
       }
 
-      // Fallback to MP4 extraction
-      const mp4Match = html.match(/"file":"([^"]+\.mp4)"/);
+      var mp4Match = html.match(/"file":"([^"]+\.mp4)"/);
       if (mp4Match) {
         return [{
           url: mp4Match[1].replace(/\\\//g, '/'),
