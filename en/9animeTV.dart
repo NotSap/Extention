@@ -185,7 +185,7 @@ class NineAnimeTv extends MProvider {
         final serverName = name.toString().toLowerCase();
         final serverType = subDub.toString().toLowerCase();
 
-        if (!hosterSelection.contains(serverName) continue;
+        if (!hosterSelection.contains(serverName)) continue;
         if (!typeSelection.contains(serverType)) continue;
 
         final sourceRes = (await client.get(
