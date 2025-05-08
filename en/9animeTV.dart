@@ -166,7 +166,6 @@ class NineAnimeTv extends MProvider {
   @override
   Future<List<MVideo>> getVideoList(String url) async {
     try {
-      // First get server list
       final res = (await client.get(
         Uri.parse("${source.baseUrl}/ajax/episode/servers?episodeId=$url"),
       )).body;
@@ -175,24 +174,20 @@ class NineAnimeTv extends MProvider {
       final serverElements = parseHtml(html).select("div.server-item");
 
       List<MVideo> videos = [];
-      final hosterSelection = preferenceHosterSelection(source.id);
-      final typeSelection = preferenceTypeSelection(source.id);
+      final hosterSelection = (getPreferenceValue(source.id, "hoster_selection") as List?)?.map((e) => e.toString().toLowerCase()).toList() ?? [];
+      final typeSelection = (getPreferenceValue(source.id, "type_selection") as List?)?.map((e) => e.toString().toLowerCase()).toList() ?? [];
 
       for (var serverElement in serverElements) {
         final name = serverElement.text;
         final id = serverElement.attr("data-id");
         final subDub = serverElement.attr("data-type");
 
-        // Convert to strings and check against preferences
-        final serverName = name.toString();
-        final serverType = subDub.toString();
-        
-        bool includeServer = hosterSelection.any((h) => h.toString().toLowerCase() == serverName.toLowerCase());
-        bool includeType = typeSelection.any((t) => t.toString().toLowerCase() == serverType.toLowerCase());
+        final serverName = name.toString().toLowerCase();
+        final serverType = subDub.toString().toLowerCase();
 
-        if (!includeServer || !includeType) continue;
+        if (!hosterSelection.contains(serverName) continue;
+        if (!typeSelection.contains(serverType)) continue;
 
-        // Get video sources
         final sourceRes = (await client.get(
           Uri.parse("${source.baseUrl}/ajax/episode/sources?id=$id"),
         )).body;
@@ -200,21 +195,17 @@ class NineAnimeTv extends MProvider {
         final videoUrl = json.decode(sourceRes)["link"];
         if (videoUrl == null || videoUrl.toString().isEmpty) continue;
 
-        // Extract based on server type
-        if (serverName.toLowerCase().contains("vidstreaming") || 
-            serverName.toLowerCase().contains("vidcloud")) {
+        if (serverName.contains("vidstreaming") || serverName.contains("vidcloud")) {
           try {
-            final extracted = await rapidCloudExtractor(videoUrl.toString(), "$serverName - $serverType");
+            final extracted = await rapidCloudExtractor(videoUrl.toString(), "$name - $subDub");
             videos.addAll(extracted);
           } catch (e) {
-            print("Error extracting from $serverName: $e");
+            print("Error extracting from $name: $e");
           }
-        }
-        // Add direct URL as fallback
-        else {
+        } else {
           videos.add(MVideo()
             ..url = videoUrl.toString()
-            ..quality = "$serverName - $serverType"
+            ..quality = "$name - $subDub"
             ..headers = {"Referer": source.baseUrl});
         }
       }
@@ -228,16 +219,13 @@ class NineAnimeTv extends MProvider {
 
   Future<List<MVideo>> rapidCloudExtractor(String url, String name) async {
     try {
-      // Determine server type
       final isMegacloud = url.toLowerCase().contains("megacloud");
       final baseUrl = isMegacloud ? "https://megacloud.tv" : "https://rapid-cloud.co";
       final apiPath = isMegacloud ? "/embed-2/ajax/e-1/getSources?id=" 
                                  : "/ajax/embed-6-v2/getSources?id=";
       
-      // Extract video ID
       final id = url.split("/").last.split("?").first;
       
-      // Fetch sources
       final response = await client.get(
         Uri.parse("$baseUrl$apiPath$id"),
         headers: {"X-Requested-With": "XMLHttpRequest"},
@@ -248,9 +236,8 @@ class NineAnimeTv extends MProvider {
       String sourcesJson;
 
       if (encrypted) {
-        // Simplified decryption - replace with your actual decryption logic
         final ciphertext = jsonData["sources"]?.toString() ?? "";
-        sourcesJson = ciphertext; // In real implementation, decrypt here
+        sourcesJson = ciphertext; // In production, add decryption logic here
       } else {
         sourcesJson = json.encode(jsonData["sources"]);
       }
@@ -258,16 +245,12 @@ class NineAnimeTv extends MProvider {
       final sources = (json.decode(sourcesJson) as List?) ?? [];
       if (sources.isEmpty) return [];
 
-      // Get master URL and type
       final masterUrl = sources.first["file"]?.toString() ?? "";
-      final type = sources.first["type"]?.toString() ?? "mp4";
+      final type = sources.first["type"]?.toString()?.toLowerCase() ?? "mp4";
 
-      // Handle HLS playlists
-      if (type.toLowerCase() == "hls") {
+      if (type == "hls") {
         return await processHlsPlaylist(masterUrl, name);
-      } 
-      // Handle direct MP4
-      else {
+      } else {
         return [MVideo()
           ..url = masterUrl
           ..quality = "$name - Default"
@@ -319,6 +302,30 @@ class NineAnimeTv extends MProvider {
       animeList.add(anime);
     }
     return MPages(animeList, true);
+  }
+
+  List<MVideo> sortVideos(List<MVideo> videos, int sourceId) {
+    final quality = getPreferenceValue(sourceId, "preferred_quality")?.toString() ?? "";
+    final server = getPreferenceValue(sourceId, "preferred_server")?.toString() ?? "";
+    final type = getPreferenceValue(sourceId, "preferred_type")?.toString() ?? "";
+    
+    videos.sort((a, b) {
+      final aMatches = a.quality.toLowerCase().contains(quality.toLowerCase()) &&
+          a.quality.toLowerCase().contains(type.toLowerCase()) &&
+          a.quality.toLowerCase().contains(server.toLowerCase());
+      
+      final bMatches = b.quality.toLowerCase().contains(quality.toLowerCase()) &&
+          b.quality.toLowerCase().contains(type.toLowerCase()) &&
+          b.quality.toLowerCase().contains(server.toLowerCase());
+
+      if (aMatches && !bMatches) return -1;
+      if (!aMatches && bMatches) return 1;
+
+      final aQuality = int.tryParse(RegExp(r'(\d+)p').firstMatch(a.quality)?.group(1) ?? '0') ?? 0;
+      final bQuality = int.tryParse(RegExp(r'(\d+)p').firstMatch(b.quality)?.group(1) ?? '0') ?? 0;
+      return bQuality.compareTo(aQuality);
+    });
+    return videos;
   }
 
   @override
@@ -474,48 +481,6 @@ class NineAnimeTv extends MProvider {
         values: ["sub", "dub"],
       ),
     ];
-  }
-
-  List<MVideo> sortVideos(List<MVideo> videos, int sourceId) {
-    String quality = getPreferenceValue(sourceId, "preferred_quality").toString();
-    String server = getPreferenceValue(sourceId, "preferred_server").toString();
-    String type = getPreferenceValue(sourceId, "preferred_type").toString();
-    
-    videos.sort((MVideo a, MVideo b) {
-      int qualityMatchA = 0;
-      if (a.quality.toLowerCase().contains(quality.toLowerCase()) &&
-          a.quality.toLowerCase().contains(type.toLowerCase()) &&
-          a.quality.toLowerCase().contains(server.toLowerCase())) {
-        qualityMatchA = 1;
-      }
-      
-      int qualityMatchB = 0;
-      if (b.quality.toLowerCase().contains(quality.toLowerCase()) &&
-          b.quality.toLowerCase().contains(type.toLowerCase()) &&
-          b.quality.toLowerCase().contains(server.toLowerCase())) {
-        qualityMatchB = 1;
-      }
-      
-      if (qualityMatchA != qualityMatchB) {
-        return qualityMatchB - qualityMatchA;
-      }
-
-      final regex = RegExp(r'(\d+)p');
-      final matchA = regex.firstMatch(a.quality);
-      final matchB = regex.firstMatch(b.quality);
-      final int qualityNumA = int.tryParse(matchA?.group(1) ?? '0') ?? 0;
-      final int qualityNumB = int.tryParse(matchB?.group(1) ?? '0') ?? 0;
-      return qualityNumB - qualityNumA;
-    });
-    return videos;
-  }
-
-  List<String> preferenceHosterSelection(int sourceId) {
-    return (getPreferenceValue(sourceId, "hoster_selection") as List?)?.cast<String>() ?? [];
-  }
-
-  List<String> preferenceTypeSelection(int sourceId) {
-    return (getPreferenceValue(sourceId, "type_selection") as List?)?.cast<String>() ?? [];
   }
 
   String ll(String url) {
