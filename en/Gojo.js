@@ -2,8 +2,10 @@ const mangayomiSources = [{
   "name":"Gojo",
   "id":1018827104,
   "baseUrl":"https://gojo.wtf",
-  "lang":"en","typeSource":"multi",
-  "iconUrl":"https://www.google.com/s2/favicons?sz=128&domain=https://gojo.wtf/","dateFormat":"",
+  "lang":"en",
+  "typeSource":"multi",
+  "iconUrl":"https://www.google.com/s2/favicons?sz=128&domain=https://gojo.wtf/",
+  "dateFormat":"",
   "dateFormatLocale":"",
   "isNsfw":false,
   "hasCloudflare":false,
@@ -29,26 +31,27 @@ class DefaultExtension extends MProvider {
 
     async search(query, page, filters) {
         try {
-            // Gojo's actual search endpoint (verified July 2024)
-            const searchUrl = `https://gojo.wtf/search?q=${encodeURIComponent(query)}`;
+            const searchUrl = `https://gojo.wtf/filter?keyword=${encodeURIComponent(query)}`;
             const client = new Client();
             const response = await client.get(searchUrl, { headers: this.headers });
             const doc = new DOMParser().parseFromString(response.body, "text/html");
 
-            // Current Gojo search result selectors
             const items = Array.from(doc.querySelectorAll('.film_list-wrap .flw-item')).map(item => {
                 const isDub = item.querySelector('.tick-dub') !== null;
+                const titleEl = item.querySelector('.film-name a');
+                const imgEl = item.querySelector('img[data-src]') || item.querySelector('img');
+
                 return {
-                    name: item.querySelector('.film-name').textContent.trim() + (isDub ? ' (Dub)' : ''),
-                    url: item.querySelector('a').href,
-                    imageUrl: item.querySelector('img[data-src]')?.dataset.src || item.querySelector('img').src,
+                    name: titleEl?.textContent.trim() + (isDub ? ' (Dub)' : ''),
+                    url: titleEl?.href,
+                    imageUrl: imgEl?.dataset.src || imgEl?.src || '',
                     language: isDub ? 'dub' : 'sub'
                 };
-            });
+            }).filter(item => item.name && item.url);
 
             return {
                 list: items,
-                hasNextPage: items.length >= 20 // Gojo shows 20 items per page
+                hasNextPage: items.length >= 20
             };
 
         } catch (error) {
@@ -71,11 +74,11 @@ class DefaultExtension extends MProvider {
                     url: ep.querySelector('a').href,
                     scanlator: isDub ? 'Gojo-Dub' : 'Gojo-Sub'
                 };
-            }).reverse(); // Newest first
+            }).reverse();
 
             return {
-                description: doc.querySelector('.description').textContent.trim(),
-                status: doc.querySelector('.status').textContent.includes('Ongoing') ? 0 : 1,
+                description: doc.querySelector('.description')?.textContent.trim() || '',
+                status: doc.querySelector('.status')?.textContent.includes('Ongoing') ? 0 : 1,
                 genre: Array.from(doc.querySelectorAll('.genre a')).map(g => g.textContent.trim()),
                 episodes
             };
@@ -96,8 +99,11 @@ class DefaultExtension extends MProvider {
             const response = await client.get(url, { headers: this.headers });
             const html = response.body;
 
-            // Current Gojo video extraction
-            const videoUrl = html.match(/player\.setup\({\s*file:\s*"([^"]+)"/)[1];
+            const videoUrlMatch = html.match(/player\.setup\({\s*file:\s*"([^"]+)"/);
+            const videoUrl = videoUrlMatch ? videoUrlMatch[1] : null;
+
+            if (!videoUrl) return [];
+
             return [{
                 url: videoUrl,
                 quality: "1080p",
@@ -110,7 +116,6 @@ class DefaultExtension extends MProvider {
         }
     }
 
-    // Required methods
     async getPopular(page) {
         return this.search("popular", page);
     }
