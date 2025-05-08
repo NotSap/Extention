@@ -183,9 +183,14 @@ class NineAnimeTv extends MProvider {
         final id = serverElement.attr("data-id");
         final subDub = serverElement.attr("data-type");
 
-        // Skip if not in preferences
-        if (!hosterSelection.any((h) => name.toLowerCase().contains(h.toLowerCase()))) continue;
-        if (!typeSelection.contains(subDub)) continue;
+        // Convert to strings and check against preferences
+        final serverName = name.toString();
+        final serverType = subDub.toString();
+        
+        bool includeServer = hosterSelection.any((h) => h.toString().toLowerCase() == serverName.toLowerCase());
+        bool includeType = typeSelection.any((t) => t.toString().toLowerCase() == serverType.toLowerCase());
+
+        if (!includeServer || !includeType) continue;
 
         // Get video sources
         final sourceRes = (await client.get(
@@ -193,22 +198,23 @@ class NineAnimeTv extends MProvider {
         )).body;
         
         final videoUrl = json.decode(sourceRes)["link"];
-        if (videoUrl == null || videoUrl.isEmpty) continue;
+        if (videoUrl == null || videoUrl.toString().isEmpty) continue;
 
         // Extract based on server type
-        if (name.toLowerCase().contains("vidstreaming") || name.toLowerCase().contains("vidcloud")) {
+        if (serverName.toLowerCase().contains("vidstreaming") || 
+            serverName.toLowerCase().contains("vidcloud")) {
           try {
-            final extracted = await rapidCloudExtractor(videoUrl, "$name - $subDub");
+            final extracted = await rapidCloudExtractor(videoUrl.toString(), "$serverName - $serverType");
             videos.addAll(extracted);
           } catch (e) {
-            print("Error extracting from $name: $e");
+            print("Error extracting from $serverName: $e");
           }
         }
         // Add direct URL as fallback
         else {
           videos.add(MVideo()
-            ..url = videoUrl
-            ..quality = "$name - $subDub"
+            ..url = videoUrl.toString()
+            ..quality = "$serverName - $serverType"
             ..headers = {"Referer": source.baseUrl});
         }
       }
@@ -223,7 +229,7 @@ class NineAnimeTv extends MProvider {
   Future<List<MVideo>> rapidCloudExtractor(String url, String name) async {
     try {
       // Determine server type
-      final isMegacloud = url.contains("megacloud");
+      final isMegacloud = url.toLowerCase().contains("megacloud");
       final baseUrl = isMegacloud ? "https://megacloud.tv" : "https://rapid-cloud.co";
       final apiPath = isMegacloud ? "/embed-2/ajax/e-1/getSources?id=" 
                                  : "/ajax/embed-6-v2/getSources?id=";
@@ -242,21 +248,22 @@ class NineAnimeTv extends MProvider {
       String sourcesJson;
 
       if (encrypted) {
-        // Simplified decryption - you may need to implement full decryption
-        sourcesJson = json.encode(jsonData["sources"]);
+        // Simplified decryption - replace with your actual decryption logic
+        final ciphertext = jsonData["sources"]?.toString() ?? "";
+        sourcesJson = ciphertext; // In real implementation, decrypt here
       } else {
         sourcesJson = json.encode(jsonData["sources"]);
       }
 
-      final sources = json.decode(sourcesJson) as List;
+      final sources = (json.decode(sourcesJson) as List?) ?? [];
       if (sources.isEmpty) return [];
 
       // Get master URL and type
-      final masterUrl = sources.first["file"];
-      final type = sources.first["type"] ?? "mp4";
+      final masterUrl = sources.first["file"]?.toString() ?? "";
+      final type = sources.first["type"]?.toString() ?? "mp4";
 
       // Handle HLS playlists
-      if (type == "hls") {
+      if (type.toLowerCase() == "hls") {
         return await processHlsPlaylist(masterUrl, name);
       } 
       // Handle direct MP4
@@ -314,47 +321,112 @@ class NineAnimeTv extends MProvider {
     return MPages(animeList, true);
   }
 
-  List<MVideo> sortVideos(List<MVideo> videos, int sourceId) {
-    String quality = getPreferenceValue(sourceId, "preferred_quality");
-    String server = getPreferenceValue(sourceId, "preferred_server");
-    String type = getPreferenceValue(sourceId, "preferred_type");
-    
-    videos.sort((a, b) {
-      int qualityMatchA = a.quality.toLowerCase().contains(quality.toLowerCase()) ? 1 : 0;
-      int qualityMatchB = b.quality.toLowerCase().contains(quality.toLowerCase()) ? 1 : 0;
-      if (qualityMatchA != qualityMatchB) return qualityMatchB - qualityMatchA;
-
-      final regex = RegExp(r'(\d+)p');
-      final matchA = regex.firstMatch(a.quality);
-      final matchB = regex.firstMatch(b.quality);
-      final qualityNumA = int.tryParse(matchA?.group(1) ?? '0') ?? 0;
-      final qualityNumB = int.tryParse(matchB?.group(1) ?? '0') ?? 0;
-      return qualityNumB - qualityNumA;
-    });
-    return videos;
-  }
-
-  List<String> preferenceHosterSelection(int sourceId) {
-    return getPreferenceValue(sourceId, "hoster_selection");
-  }
-
-  List<String> preferenceTypeSelection(int sourceId) {
-    return getPreferenceValue(sourceId, "type_selection");
-  }
-
-  String ll(String url) {
-    return url.contains("?") ? "&" : "?";
-  }
-
   @override
   List<dynamic> getFilterList() {
     return [
       GroupFilter("GenreFilter", "Genre", [
         CheckBoxFilter("Action", "1"),
         CheckBoxFilter("Adventure", "2"),
-        // ... rest of your genre filters
+        CheckBoxFilter("Cars", "3"),
+        CheckBoxFilter("Comedy", "4"),
+        CheckBoxFilter("Dementia", "5"),
+        CheckBoxFilter("Demons", "6"),
+        CheckBoxFilter("Drama", "8"),
+        CheckBoxFilter("Ecchi", "9"),
+        CheckBoxFilter("Fantasy", "10"),
+        CheckBoxFilter("Game", "11"),
+        CheckBoxFilter("Harem", "35"),
+        CheckBoxFilter("Historical", "13"),
+        CheckBoxFilter("Horror", "14"),
+        CheckBoxFilter("Isekai", "44"),
+        CheckBoxFilter("Josei", "43"),
+        CheckBoxFilter("Kids", "15"),
+        CheckBoxFilter("Magic", "16"),
+        CheckBoxFilter("Martial Arts", "17"),
+        CheckBoxFilter("Mecha", "18"),
+        CheckBoxFilter("Military", "38"),
+        CheckBoxFilter("Music", "19"),
+        CheckBoxFilter("Mystery", "7"),
+        CheckBoxFilter("Parody", "20"),
+        CheckBoxFilter("Police", "39"),
+        CheckBoxFilter("Psychological", "40"),
+        CheckBoxFilter("Romance", "22"),
+        CheckBoxFilter("Samurai", "21"),
+        CheckBoxFilter("School", "23"),
+        CheckBoxFilter("Sci-Fi", "24"),
+        CheckBoxFilter("Seinen", "42"),
+        CheckBoxFilter("Shoujo", "25"),
+        CheckBoxFilter("Shoujo Ai", "26"),
+        CheckBoxFilter("Shounen", "27"),
+        CheckBoxFilter("Shounen Ai", "28"),
+        CheckBoxFilter("Slice of Life", "36"),
+        CheckBoxFilter("Space", "29"),
+        CheckBoxFilter("Sports", "30"),
+        CheckBoxFilter("Super Power", "31"),
+        CheckBoxFilter("Supernatural", "37"),
+        CheckBoxFilter("Thriller", "41"),
+        CheckBoxFilter("Vampire", "32"),
       ]),
-      // ... rest of your filters
+      GroupFilter("SeasonFilter", "Season", [
+        CheckBoxFilter("Fall", "3"),
+        CheckBoxFilter("Summer", "2"),
+        CheckBoxFilter("Spring", "1"),
+        CheckBoxFilter("Winter", "4"),
+      ]),
+      GroupFilter("YearFilter", "Year", [
+        CheckBoxFilter("2024", "2024"),
+        CheckBoxFilter("2023", "2023"),
+        CheckBoxFilter("2022", "2022"),
+        CheckBoxFilter("2021", "2021"),
+        CheckBoxFilter("2020", "2020"),
+        CheckBoxFilter("2019", "2019"),
+        CheckBoxFilter("2018", "2018"),
+        CheckBoxFilter("2017", "2017"),
+        CheckBoxFilter("2016", "2016"),
+        CheckBoxFilter("2015", "2015"),
+        CheckBoxFilter("2014", "2014"),
+        CheckBoxFilter("2013", "2013"),
+        CheckBoxFilter("2012", "2012"),
+        CheckBoxFilter("2011", "2011"),
+        CheckBoxFilter("2010", "2010"),
+        CheckBoxFilter("2009", "2009"),
+        CheckBoxFilter("2008", "2008"),
+        CheckBoxFilter("2007", "2007"),
+        CheckBoxFilter("2006", "2006"),
+        CheckBoxFilter("2005", "2005"),
+        CheckBoxFilter("2004", "2004"),
+        CheckBoxFilter("2003", "2003"),
+        CheckBoxFilter("2002", "2002"),
+        CheckBoxFilter("2001", "2001"),
+      ]),
+      SelectFilter("SortFilter", "Sort by", 0, [
+        SelectFilterOption("All", "all"),
+        SelectFilterOption("Default", "default"),
+        SelectFilterOption("Recently Added", "recently_added"),
+        SelectFilterOption("Recently Updated", "recently_updated"),
+        SelectFilterOption("Score", "score"),
+        SelectFilterOption("Name A-Z", "name_az"),
+        SelectFilterOption("Released Date", "released_date"),
+        SelectFilterOption("Most Watched", "most_watched"),
+      ]),
+      GroupFilter("TypeFilter", "Type", [
+        CheckBoxFilter("Movie", "1"),
+        CheckBoxFilter("TV Series", "2"),
+        CheckBoxFilter("OVA", "3"),
+        CheckBoxFilter("ONA", "4"),
+        CheckBoxFilter("Special", "5"),
+        CheckBoxFilter("Music", "6"),
+      ]),
+      SelectFilter("StatusFilter", "Status", 0, [
+        SelectFilterOption("All", "all"),
+        SelectFilterOption("Finished Airing", "1"),
+        SelectFilterOption("Currently Airing", "2"),
+        SelectFilterOption("Not yet aired", "3"),
+      ]),
+      GroupFilter("LanguageFilter", "Language", [
+        CheckBoxFilter("Sub", "sub"),
+        CheckBoxFilter("Dub", "dub"),
+      ]),
     ];
   }
 
@@ -369,8 +441,88 @@ class NineAnimeTv extends MProvider {
         entries: ["1080p", "720p", "480p", "360p"],
         entryValues: ["1080", "720", "480", "360"],
       ),
-      // ... rest of your preferences
+      ListPreference(
+        key: "preferred_server",
+        title: "Preferred server",
+        summary: "",
+        valueIndex: 0,
+        entries: ["Vidstreaming", "VidCloud"],
+        entryValues: ["Vidstreaming", "VidCloud"],
+      ),
+      ListPreference(
+        key: "preferred_type",
+        title: "Preferred Type",
+        summary: "",
+        valueIndex: 0,
+        entries: ["Sub", "Dub"],
+        entryValues: ["sub", "dub"],
+      ),
+      MultiSelectListPreference(
+        key: "hoster_selection",
+        title: "Enable/Disable Hosts",
+        summary: "",
+        entries: ["Vidstreaming", "VidCloud"],
+        entryValues: ["Vidstreaming", "Vidcloud"],
+        values: ["Vidstreaming", "Vidcloud"],
+      ),
+      MultiSelectListPreference(
+        key: "type_selection",
+        title: "Enable/Disable Types",
+        summary: "",
+        entries: ["Sub", "Dub"],
+        entryValues: ["sub", "dub"],
+        values: ["sub", "dub"],
+      ),
     ];
+  }
+
+  List<MVideo> sortVideos(List<MVideo> videos, int sourceId) {
+    String quality = getPreferenceValue(sourceId, "preferred_quality").toString();
+    String server = getPreferenceValue(sourceId, "preferred_server").toString();
+    String type = getPreferenceValue(sourceId, "preferred_type").toString();
+    
+    videos.sort((MVideo a, MVideo b) {
+      int qualityMatchA = 0;
+      if (a.quality.toLowerCase().contains(quality.toLowerCase()) &&
+          a.quality.toLowerCase().contains(type.toLowerCase()) &&
+          a.quality.toLowerCase().contains(server.toLowerCase())) {
+        qualityMatchA = 1;
+      }
+      
+      int qualityMatchB = 0;
+      if (b.quality.toLowerCase().contains(quality.toLowerCase()) &&
+          b.quality.toLowerCase().contains(type.toLowerCase()) &&
+          b.quality.toLowerCase().contains(server.toLowerCase())) {
+        qualityMatchB = 1;
+      }
+      
+      if (qualityMatchA != qualityMatchB) {
+        return qualityMatchB - qualityMatchA;
+      }
+
+      final regex = RegExp(r'(\d+)p');
+      final matchA = regex.firstMatch(a.quality);
+      final matchB = regex.firstMatch(b.quality);
+      final int qualityNumA = int.tryParse(matchA?.group(1) ?? '0') ?? 0;
+      final int qualityNumB = int.tryParse(matchB?.group(1) ?? '0') ?? 0;
+      return qualityNumB - qualityNumA;
+    });
+    return videos;
+  }
+
+  List<String> preferenceHosterSelection(int sourceId) {
+    return (getPreferenceValue(sourceId, "hoster_selection") as List?)?.cast<String>() ?? [];
+  }
+
+  List<String> preferenceTypeSelection(int sourceId) {
+    return (getPreferenceValue(sourceId, "type_selection") as List?)?.cast<String>() ?? [];
+  }
+
+  String ll(String url) {
+    if (url.contains("?")) {
+      return "&";
+    }
+    return "?";
   }
 }
 
