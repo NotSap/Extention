@@ -1,49 +1,69 @@
-class NineAnimeTVExtension extends MProvider {
+const mangayomiSources = [{
+  "name": "9AnimeTV (Fixed)",
+  "id": 957331416,
+  "baseUrl": "https://9animetv.to",
+  "lang": "en",
+  "typeSource": "single",
+  "iconUrl": "https://raw.githubusercontent.com/kodjodevf/mangayomi-extensions/main/dart/anime/src/en/nineanimetv/icon.png",
+  "dateFormat": "",
+  "dateFormatLocale": "",
+  "isNsfw": false,
+  "hasCloudflare": false,
+  "version": "1.0.1",
+  "isManga": false,
+  "itemType": 1,
+  "isFullData": false,
+  "appMinVerReq": "0.5.0"
+}];
+
+class DefaultExtension extends MProvider {
   constructor() {
     super();
     this.headers = {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-      "Referer": "https://9animetv.to/",
-      "X-Requested-With": "XMLHttpRequest"
+      "Referer": "https://9animetv.to/"
     };
   }
 
-  async search(query, page = 1, filters) {
+  async search(query, page) {
     try {
       let url;
-      if (query === "popular") {
-        url = `${this.baseUrl}/popular?page=${page}`;
-      } else if (query === "latest") {
-        url = `${this.baseUrl}/latest?page=${page}`;
+      if (query == "popular") {
+        url = this.baseUrl + "/popular?page=" + page;
+      } else if (query == "latest") {
+        url = this.baseUrl + "/latest?page=" + page;
       } else {
-        url = `${this.baseUrl}/search?keyword=${encodeURIComponent(query)}&page=${page}`;
+        url = this.baseUrl + "/search?keyword=" + encodeURIComponent(query) + "&page=" + page;
       }
 
       const client = new Client();
       const response = await client.get(url, { headers: this.headers });
       const doc = new DOMParser().parseFromString(response.body, "text/html");
 
-      const items = Array.from(doc.querySelectorAll('.film_list-wrap .flw-item')).map(item => {
+      const items = [];
+      const elements = doc.querySelectorAll('.film_list-wrap .flw-item');
+      for (let i = 0; i < elements.length; i++) {
+        const item = elements[i];
         const titleEl = item.querySelector('.film-name a');
         const imgEl = item.querySelector('img');
-        const isDub = item.querySelector('.tick-dub') !== null || /dub/i.test(titleEl?.textContent || '');
+        const isDub = item.querySelector('.tick-dub') != null || /dub/i.test(titleEl ? titleEl.textContent : '');
 
-        return {
-          name: `${titleEl?.textContent.trim()}${isDub ? ' (Dub)' : ''}`,
-          url: `${this.baseUrl}${titleEl?.getAttribute('href')}`,
-          imageUrl: imgEl?.getAttribute('data-src') || imgEl?.getAttribute('src') || '',
-          language: isDub ? 'dub' : 'sub'
-        };
-      }).filter(item => item.name && item.url);
-
-      const hasNextPage = doc.querySelector('.pagination .page-item:last-child:not(.active)') !== null;
+        if (titleEl && titleEl.href) {
+          items.push({
+            name: (titleEl.textContent.trim() || 'Untitled') + (isDub ? ' (Dub)' : ''),
+            url: this.baseUrl + titleEl.getAttribute('href'),
+            imageUrl: imgEl ? (imgEl.getAttribute('data-src') || imgEl.getAttribute('src') || '') : '',
+            language: isDub ? 'dub' : 'sub'
+          });
+        }
+      }
 
       return {
         list: items,
-        hasNextPage
+        hasNextPage: doc.querySelector('.pagination .page-item:last-child:not(.active)') != null
       };
     } catch (error) {
-      console.error("Search error:", error);
+      console.log("Search error:", error);
       return { list: [], hasNextPage: false };
     }
   }
@@ -54,30 +74,33 @@ class NineAnimeTVExtension extends MProvider {
       const response = await client.get(url, { headers: this.headers });
       const doc = new DOMParser().parseFromString(response.body, "text/html");
 
-      // Extract only dubbed episodes
-      const episodes = Array.from(doc.querySelectorAll('.episode-list .ep-item')).map(ep => {
-        const isDub = ep.querySelector('.dub') !== null || /dub/i.test(ep.textContent || '');
-        if (!isDub) return null;
+      const episodes = [];
+      const epElements = doc.querySelectorAll('.episode-list .ep-item');
+      for (let i = 0; i < epElements.length; i++) {
+        const ep = epElements[i];
+        const isDub = ep.querySelector('.dub') != null || /dub/i.test(ep.textContent || '');
+        if (!isDub) continue;
 
         const epLink = ep.querySelector('a');
-        const epNum = epLink.getAttribute('data-number') || epLink.textContent.match(/\d+/)?.[0] || 0;
-        
-        return {
-          num: parseInt(epNum),
-          name: `Episode ${epNum} (Dub)`,
-          url: `${this.baseUrl}${epLink.getAttribute('href')}`,
-          scanlator: '9AnimeTV'
-        };
-      }).filter(Boolean).reverse();
+        if (!epLink) continue;
+
+        const epNum = epLink.getAttribute('data-number') || epLink.textContent.match(/\d+/);
+        episodes.push({
+          num: parseInt(epNum ? epNum[0] : 0),
+          name: "Episode " + (epNum ? epNum[0] : 0) + " (Dub)",
+          url: this.baseUrl + epLink.getAttribute('href'),
+          scanlator: "9AnimeTV"
+        });
+      }
 
       return {
-        description: doc.querySelector('.description')?.textContent.trim() || 'No description available',
-        status: doc.querySelector('.anisc-info .item')?.textContent.includes('Ongoing') ? 0 : 1,
-        genre: Array.from(doc.querySelectorAll('.anisc-info a[href*="/genre/"]')).map(g => g.textContent.trim()),
-        episodes
+        description: doc.querySelector('.description') ? doc.querySelector('.description').textContent.trim() : 'No description',
+        status: doc.querySelector('.anisc-info .item') && doc.querySelector('.anisc-info .item').textContent.includes('Ongoing') ? 0 : 1,
+        genre: Array.from(doc.querySelectorAll('.anisc-info a[href*="/genre/"]')).map(function(g) { return g.textContent.trim(); }),
+        episodes: episodes.reverse()
       };
     } catch (error) {
-      console.error("Detail error:", error);
+      console.log("Detail error:", error);
       return {
         description: "Failed to load details",
         status: 5,
@@ -90,59 +113,34 @@ class NineAnimeTVExtension extends MProvider {
   async getVideoList(url) {
     try {
       const client = new Client();
-      
-      // 1. Get episode page
-      const epResponse = await client.get(url, { headers: this.headers });
-      const epDoc = new DOMParser().parseFromString(epResponse.body, "text/html");
-      
-      // 2. Extract server list
-      const serverList = Array.from(epDoc.querySelectorAll('.server-list .server-item')).map(server => {
-        return {
-          name: server.getAttribute('data-server-id') || 'default',
-          url: `${this.baseUrl}${server.querySelector('a').getAttribute('href')}`
-        };
-      });
+      const response = await client.get(url, { headers: this.headers });
+      const html = response.body;
 
-      // 3. Try each server until we find a working one
-      for (const server of serverList) {
-        try {
-          const serverResponse = await client.get(server.url, { headers: this.headers });
-          const serverData = JSON.parse(serverResponse.body);
-          const serverDoc = new DOMParser().parseFromString(serverData.html, "text/html");
-          
-          // 4. Extract iframe URL
-          const iframe = serverDoc.querySelector('iframe');
-          if (!iframe) continue;
-          
-          const iframeUrl = iframe.getAttribute('src');
-          if (!iframeUrl.includes('http')) continue;
-          
-          // 5. Get final player page
-          const iframeResponse = await client.get(iframeUrl, { 
-            headers: { ...this.headers, Referer: url } 
-          });
-          
-          // 6. Extract m3u8 URL
-          const m3u8Match = iframeResponse.body.match(/file:"([^"]+\.m3u8)"/);
-          if (m3u8Match) {
-            return [{
-              url: m3u8Match[1].replace(/\\\//g, '/'),
-              quality: "Auto",
-              isM3U8: true,
-              headers: { 
-                "Referer": iframeUrl,
-                "Origin": this.baseUrl
-              }
-            }];
-          }
-        } catch (e) {
-          console.log(`Server ${server.name} failed, trying next`);
-        }
+      // First try to find m3u8 URL
+      const m3u8Match = html.match(/"file":"([^"]+\.m3u8)"/);
+      if (m3u8Match) {
+        return [{
+          url: m3u8Match[1].replace(/\\\//g, '/'),
+          quality: "1080p",
+          isM3U8: true,
+          headers: { "Referer": "https://9animetv.to/" }
+        }];
       }
-      
+
+      // Fallback to MP4 extraction
+      const mp4Match = html.match(/"file":"([^"]+\.mp4)"/);
+      if (mp4Match) {
+        return [{
+          url: mp4Match[1].replace(/\\\//g, '/'),
+          quality: "1080p",
+          isM3U8: false,
+          headers: { "Referer": "https://9animetv.to/" }
+        }];
+      }
+
       return [];
     } catch (error) {
-      console.error("Video error:", error);
+      console.log("Video error:", error);
       return [];
     }
   }
