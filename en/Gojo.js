@@ -29,9 +29,17 @@ class DefaultExtension extends MProvider {
     };
   }
 
-  async search(query, page, filters) {
+  async search(query, page = 1, filters) {
     try {
-      const searchUrl = `https://gojo.wtf/filter?keyword=${encodeURIComponent(query)}`;
+      let searchUrl;
+      if (query === "popular") {
+        searchUrl = `${this.baseUrl}/home`;
+      } else if (query === "latest") {
+        searchUrl = `${this.baseUrl}/home`;
+      } else {
+        searchUrl = `${this.baseUrl}/filter?keyword=${encodeURIComponent(query)}&page=${page}`;
+      }
+
       const client = new Client();
       const response = await client.get(searchUrl, { headers: this.headers });
       const doc = new DOMParser().parseFromString(response.body, "text/html");
@@ -40,18 +48,26 @@ class DefaultExtension extends MProvider {
         const isDub = item.querySelector('.tick-dub') !== null;
         const titleEl = item.querySelector('.film-name a');
         const imgEl = item.querySelector('img[data-src]') || item.querySelector('img');
+        const url = titleEl?.getAttribute('href');
+        
+        // Ensure URL is absolute
+        const absoluteUrl = url && !url.startsWith('http') ? `${this.baseUrl}${url.startsWith('/') ? '' : '/'}${url}` : url;
 
         return {
-          name: titleEl?.textContent.trim() + (isDub ? ' (Dub)' : ''),
-          url: titleEl?.href,
-          imageUrl: imgEl?.dataset.src || imgEl?.src || '',
+          name: (titleEl?.textContent.trim() || 'Untitled') + (isDub ? ' (Dub)' : ''),
+          url: absoluteUrl,
+          imageUrl: imgEl?.getAttribute('data-src') || imgEl?.getAttribute('src') || '',
           language: isDub ? 'dub' : 'sub'
         };
       }).filter(item => item.name && item.url);
 
+      // Check for next page
+      const nextPageLink = doc.querySelector('.pagination .page-item:last-child:not(.active) a');
+      const hasNextPage = Boolean(nextPageLink);
+
       return {
         list: items,
-        hasNextPage: items.length >= 20
+        hasNextPage
       };
 
     } catch (error) {
@@ -68,11 +84,16 @@ class DefaultExtension extends MProvider {
 
       const episodes = Array.from(doc.querySelectorAll('.eps li')).map(ep => {
         const isDub = ep.querySelector('.dub') !== null;
-        const num = parseInt(ep.querySelector('a')?.textContent.trim().replace(/\D+/g, '')) || 0;
+        const epLink = ep.querySelector('a');
+        const epUrl = epLink?.getAttribute('href');
+        const absoluteEpUrl = epUrl && !epUrl.startsWith('http') ? 
+          `${this.baseUrl}${epUrl.startsWith('/') ? '' : '/'}${epUrl}` : epUrl;
+        
+        const num = parseInt(epLink?.textContent.trim().replace(/\D+/g, '')) || 0;
         return {
           num,
           name: `Episode ${num}${isDub ? ' (Dub)' : ''}`,
-          url: ep.querySelector('a').href,
+          url: absoluteEpUrl,
           scanlator: isDub ? 'Gojo-Dub' : 'Gojo-Sub'
         };
       }).reverse();
