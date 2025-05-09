@@ -25,11 +25,11 @@ class DefaultExtension extends MProvider {
     }
 
     async request(slug) {
-        var url = slug
-        var baseUrl = this.getBaseUrl()
+        var url = slug;
+        var baseUrl = this.getBaseUrl();
         if (!slug.includes(baseUrl)) url = baseUrl + slug;
         var res = await this.client.get(url);
-        return res.body
+        return res.body;
     }
 
     async getPage(slug) {
@@ -39,7 +39,7 @@ class DefaultExtension extends MProvider {
 
     async searchPage({ query = "", type = [], genre = [], status = [], sort = "", season = [], year = [], rating = [], country = [], language = [], page = 1 } = {}) {
         function bundleSlug(category, items) {
-            var rd = ""
+            var rd = "";
             for (var item of items) {
                 rd += `&${category}[]=${encodeURIComponent(item.toLowerCase())}`;
             }
@@ -47,11 +47,8 @@ class DefaultExtension extends MProvider {
         }
 
         var slug = "/browser?";
-        
         if (query && query.trim() !== "") {
             slug += "keyword=" + encodeURIComponent(query.trim());
-        } else {
-            slug += "keyword=";
         }
 
         if (type.length > 0) slug += bundleSlug("type", type);
@@ -70,42 +67,71 @@ class DefaultExtension extends MProvider {
         var list = [];
         var body = await this.getPage(slug);
 
-        var noResults = body.selectFirst(".no-results");
-        if (noResults) {
-            return { list, hasNextPage: false };
-        }
-
-        var paginations = body.select(".pagination > li");
-        var hasNextPage = paginations.length > 0 ? !paginations[paginations.length - 1].className.includes("active") : false;
-
-        var titlePref = this.getPreference("animekai_title_lang");
+        // First try the original container
         var animeContainer = body.selectFirst(".aitem-wrapper");
         
+        // Fallback to alternative containers if primary not found
+        if (!animeContainer) {
+            animeContainer = body.selectFirst(".list-update") || 
+                            body.selectFirst(".anime-list") || 
+                            body.selectFirst(".items");
+        }
+
         if (animeContainer) {
-            var animes = animeContainer.select(".aitem");
+            var animes = animeContainer.select(".aitem, .anime-item, .list-item, .item");
             animes.forEach(anime => {
-                var link = anime.selectFirst("a").getHref;
-                var imageUrl = anime.selectFirst("img").attr("data-src");
-                var titleElement = anime.selectFirst("a.title");
-                var name = titlePref.includes("jp") ? titleElement.attr(titlePref) || titleElement.text : titleElement.text;
-                
-                if (name && link && imageUrl) {
-                    list.push({ name, link, imageUrl });
+                try {
+                    var link = anime.selectFirst("a")?.getHref;
+                    if (!link) return;
+                    
+                    var imageElement = anime.selectFirst("img");
+                    var imageUrl = imageElement?.attr("data-src") || 
+                                 imageElement?.getSrc || 
+                                 "";
+                    
+                    var titleElement = anime.selectFirst("a.title, .name, .title");
+                    var name = titleElement?.text?.trim();
+                    
+                    if (name && link) {
+                        list.push({ 
+                            name, 
+                            link, 
+                            imageUrl 
+                        });
+                    }
+                } catch (e) {
+                    console.log("Error parsing anime item: " + e);
                 }
             });
         }
 
-        return { list, hasNextPage };
+        var paginations = body.select(".pagination > li, .pagination a");
+        var hasNextPage = paginations.length > 0 ? 
+            !paginations[paginations.length - 1].className?.includes("active") : 
+            false;
+
+        return { 
+            list, 
+            hasNextPage 
+        };
     }
 
     async getPopular(page) {
         var types = this.getPreference("animekai_popular_latest_type");
-        return await this.searchPage({ sort: "trending", type: types, page: page });
+        return await this.searchPage({ 
+            sort: "trending", 
+            type: types, 
+            page: page 
+        });
     }
 
     async getLatestUpdates(page) {
         var types = this.getPreference("animekai_popular_latest_type");
-        return await this.searchPage({ sort: "updated_date", type: types, page: page });
+        return await this.searchPage({ 
+            sort: "updated_date", 
+            type: types, 
+            page: page 
+        });
     }
 
     async search(query, page, filters) {
@@ -159,25 +185,33 @@ class DefaultExtension extends MProvider {
         var link = this.getBaseUrl() + slug;
         var body = await this.getPage(slug);
 
-        var mainSection = body.selectFirst(".watch-section");
+        var mainSection = body.selectFirst(".watch-section, .anime-detail, .detail");
         if (!mainSection) return null;
 
-        var imageUrl = mainSection.selectFirst("div.poster")?.selectFirst("img")?.getSrc || "";
+        var imageElement = mainSection.selectFirst("div.poster img, .thumb img, img.poster");
+        var imageUrl = imageElement?.getSrc || 
+                     imageElement?.attr("data-src") || 
+                     "";
 
         var namePref = this.getPreference("animekai_title_lang");
-        var nameSection = mainSection.selectFirst("div.title");
-        var name = namePref.includes("jp") ? nameSection?.attr(namePref) || nameSection?.text : nameSection?.text || "No title";
+        var nameSection = mainSection.selectFirst("div.title, .info h1, h1.title");
+        var name = namePref.includes("jp") ? 
+            (nameSection?.attr(namePref) || nameSection?.text) : 
+            (nameSection?.text || "No title");
 
-        var description = mainSection.selectFirst("div.desc")?.text || "No description";
+        var description = mainSection.selectFirst("div.desc, .description, .synopsis")?.text || 
+                         "No description";
 
-        var detailSection = mainSection.select("div.detail > div");
+        var detailSection = mainSection.select("div.detail > div, .meta div, .info div");
 
         var genre = [];
         var status = 5;
         detailSection.forEach(item => {
             var itemText = item.text.trim();
-            if (itemText.includes("Genres")) {
-                genre = itemText.replace("Genres:  ", "").split(", ");
+            if (itemText.match(/Genres?:?/i)) {
+                genre = itemText.replace(/Genres?:?\s*/i, "")
+                               .split(/,| /)
+                               .filter(g => g.trim());
             }
             if (itemText.includes("Status")) {
                 var statusText = item.selectFirst("span")?.text;
@@ -185,9 +219,10 @@ class DefaultExtension extends MProvider {
             }
         });
 
+        // Get Anify information
         var anifyInfo = {};
         try {
-            var anifySection = body.selectFirst(".anify-info");
+            var anifySection = body.selectFirst(".anify-info, [data-mal-id]");
             if (anifySection) {
                 anifyInfo = {
                     malId: anifySection.attr("data-mal-id") || "",
@@ -215,11 +250,33 @@ class DefaultExtension extends MProvider {
         }
 
         var chapters = [];
-        var animeRating = body.selectFirst("#anime-rating");
-        if (!animeRating) return { name, imageUrl, link, description, genre, status, chapters, anifyInfo };
+        var animeRating = body.selectFirst("#anime-rating, [data-id]");
+        if (!animeRating) {
+            return { 
+                name, 
+                imageUrl, 
+                link, 
+                description, 
+                genre, 
+                status, 
+                chapters,
+                anifyInfo 
+            };
+        }
 
         var animeId = animeRating.attr("data-id");
-        if (!animeId) return { name, imageUrl, link, description, genre, status, chapters, anifyInfo };
+        if (!animeId) {
+            return { 
+                name, 
+                imageUrl, 
+                link, 
+                description, 
+                genre, 
+                status, 
+                chapters,
+                anifyInfo 
+            };
+        }
 
         var token = await this.kaiEncrypt(animeId);
         var res = await this.request(`/ajax/episodes/list?ani_id=${animeId}&_=${token}`);
@@ -227,16 +284,18 @@ class DefaultExtension extends MProvider {
         
         if (episodeData.status == 200) {
             var doc = new Document(episodeData["result"]);
-            var episodesList = doc.selectFirst("div.eplist.titles");
+            var episodesList = doc.selectFirst("div.eplist.titles, .episode-list, .episodes");
             if (episodesList) {
-                var episodes = episodesList.select("li");
+                var episodes = episodesList.select("li, .episode-item");
                 var showUncenEp = this.getPreference("animekai_show_uncen_epsiodes");
 
                 for (var item of episodes) {
                     var aTag = item.selectFirst("a");
                     if (!aTag) continue;
 
-                    var num = parseInt(aTag.attr("num")) || 0;
+                    var num = parseInt(aTag.attr("num") || 
+                              aTag.text.match(/\d+/)?.[0] || 
+                              0);
                     var title = aTag.selectFirst("span")?.text || "";
                     title = title.includes("Episode") ? "" : `: ${title}`;
                     var epName = `Episode ${num}${title}`;
@@ -244,7 +303,7 @@ class DefaultExtension extends MProvider {
                     var langs = aTag.attr("langs") || "1";
                     var scanlator = langs === "1" ? "SUB" : "SUB, DUB";
 
-                    var token = aTag.attr("token");
+                    var token = aTag.attr("token") || aTag.attr("data-id") || "";
                     if (!token) continue;
 
                     var epData = {
@@ -292,89 +351,89 @@ class DefaultExtension extends MProvider {
     }
 
     async getVideoList(url) {
-        var streams = []
-        var prefServer = this.getPreference("animekai_pref_stream_server")
-        if (prefServer.length < 1) prefServer.push("1")
+        var streams = [];
+        var prefServer = this.getPreference("animekai_pref_stream_server");
+        if (prefServer.length < 1) prefServer.push("1");
 
-        var prefDubType = this.getPreference("animekai_pref_stream_subdub_type")
-        if (prefDubType.length < 1) prefDubType.push("sub")
+        var prefDubType = this.getPreference("animekai_pref_stream_subdub_type");
+        if (prefDubType.length < 1) prefDubType.push("sub");
 
-        var epSlug = url.split("||")
+        var epSlug = url.split("||");
 
-        var isUncensoredVersion = false
+        var isUncensoredVersion = false;
         for (var epId of epSlug) {
-            var token = await this.kaiEncrypt(epId)
-            var res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`)
-            var body = JSON.parse(res)
-            if (body.status != 200) continue
+            var token = await this.kaiEncrypt(epId);
+            var res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
+            var body = JSON.parse(res);
+            if (body.status != 200) continue;
 
-            var serverResult = new Document(body.result)
+            var serverResult = new Document(body.result);
 
-            var SERVERDATA = []
-            var server_items = serverResult.select("div.server-items")
+            var SERVERDATA = [];
+            var server_items = serverResult.select("div.server-items");
 
             for (var dubSection of server_items) {
-                var dubType = dubSection.attr("data-id")
-                if (!prefDubType.includes(dubType)) continue
+                var dubType = dubSection.attr("data-id");
+                if (!prefDubType.includes(dubType)) continue;
 
                 for (var ser of dubSection.select("span.server")) {
-                    var serverName = ser.text
-                    if (!prefServer.includes(serverName.replace("Server ", ""))) continue
+                    var serverName = ser.text;
+                    if (!prefServer.includes(serverName.replace("Server ", ""))) continue;
 
-                    var dataId = ser.attr("data-lid")
+                    var dataId = ser.attr("data-lid");
                     SERVERDATA.push({
                         serverName,
                         dataId,
                         dubType
-                    })
+                    });
                 }
             }
 
             for (var serverData of SERVERDATA) {
-                var serverName = serverData.serverName
-                var dataId = serverData.dataId
-                var dubType = serverData.dubType.toUpperCase()
-                dubType = dubType == "SUB" ? "HARDSUB" : dubType
-                dubType = isUncensoredVersion ? `${dubType} [Uncensored]` : dubType
+                var serverName = serverData.serverName;
+                var dataId = serverData.dataId;
+                var dubType = serverData.dubType.toUpperCase();
+                dubType = dubType == "SUB" ? "HARDSUB" : dubType;
+                dubType = isUncensoredVersion ? `${dubType} [Uncensored]` : dubType;
 
-                var megaUrl = await this.getMegaUrl(dataId)
-                var serverStreams = await this.decryptMegaEmbed(megaUrl, serverName, dubType)
-                streams = [...streams, ...serverStreams]
+                var megaUrl = await this.getMegaUrl(dataId);
+                var serverStreams = await this.decryptMegaEmbed(megaUrl, serverName, dubType);
+                streams = [...streams, ...serverStreams];
 
                 if (dubType.includes("DUB")) {
                     if (!megaUrl.includes("sub.list=")) continue;
-                    var subList = megaUrl.split("sub.list=")[1]
+                    var subList = megaUrl.split("sub.list=")[1];
 
-                    var subres = await this.client.get(subList)
-                    var subtitles = JSON.parse(subres.body)
-                    var subs = this.formatSubtitles(subtitles, dubType)
+                    var subres = await this.client.get(subList);
+                    var subtitles = JSON.parse(subres.body);
+                    var subs = this.formatSubtitles(subtitles, dubType);
                     streams[streams.length - 1].subtitles = subs;
                 }
             }
             isUncensoredVersion = true;
         }
 
-        return streams
+        return streams;
     }
 
     getFilterList() {
         function formateState(type_name, items, values) {
             var state = [];
             for (var i = 0; i < items.length; i++) {
-                state.push({ type_name: type_name, name: items[i], value: values[i] })
+                state.push({ type_name: type_name, name: items[i], value: values[i] });
             }
             return state;
         }
 
         var filters = [];
 
-        var items = ["TV", "Special", "OVA", "ONA", "Music", "Movie"]
-        var values = ["tv", "special", "ova", "ona", "music", "movie"]
+        var items = ["TV", "Special", "OVA", "ONA", "Music", "Movie"];
+        var values = ["tv", "special", "ova", "ona", "music", "movie"];
         filters.push({
             type_name: "GroupFilter",
             name: "Types",
             state: formateState("CheckBox", items, values)
-        })
+        });
 
         items = [
             "Action", "Adventure", "Avant Garde", "Boys Love", "Comedy", "Demons", "Drama", "Ecchi", "Fantasy",
@@ -394,15 +453,15 @@ class DefaultExtension extends MProvider {
             type_name: "GroupFilter",
             name: "Genres",
             state: formateState("CheckBox", items, values)
-        })
+        });
 
-        items = ["Not Yet Aired", "Releasing", "Completed"]
-        values = ["info", "releasing", "completed"]
+        items = ["Not Yet Aired", "Releasing", "Completed"];
+        values = ["info", "releasing", "completed"];
         filters.push({
             type_name: "GroupFilter",
             name: "Status",
             state: formateState("CheckBox", items, values)
-        })
+        });
 
         items = [
             "All", "Updated date", "Released date", "End date", "Added date", "Trending",
@@ -418,7 +477,7 @@ class DefaultExtension extends MProvider {
             name: "Sort by",
             state: 0,
             values: formateState("SelectOption", items, values)
-        })
+        });
 
         items = ["Fall", "Summer", "Spring", "Winter", "Unknown"];
         values = ["fall", "summer", "spring", "winter", "unknown"];
@@ -426,16 +485,16 @@ class DefaultExtension extends MProvider {
             type_name: "GroupFilter",
             name: "Season",
             state: formateState("CheckBox", items, values)
-        })
+        });
 
         const currentYear = new Date().getFullYear();
-        var years = Array.from({ length: currentYear - 1999 }, (_, i) => (2000 + i).toString()).reverse()
-        items = [...years, "1990s", "1980s", "1970s", "1960s", "1950s", "1940s", "1930s", "1920s", "1910s", "1900s",]
+        var years = Array.from({ length: currentYear - 1999 }, (_, i) => (2000 + i).toString()).reverse();
+        items = [...years, "1990s", "1980s", "1970s", "1960s", "1950s", "1940s", "1930s", "1920s", "1910s", "1900s"];
         filters.push({
             type_name: "GroupFilter",
             name: "Years",
             state: formateState("CheckBox", items, items)
-        })
+        });
 
         items = [
             "G - All Ages",
@@ -451,7 +510,7 @@ class DefaultExtension extends MProvider {
             type_name: "GroupFilter",
             name: "Ratings",
             state: formateState("CheckBox", items, items)
-        })
+        });
 
         items = ["Japan", "China"];
         values = ["11", "2"];
@@ -459,7 +518,7 @@ class DefaultExtension extends MProvider {
             type_name: "GroupFilter",
             name: "Country",
             state: formateState("CheckBox", items, items)
-        })
+        });
 
         items = ["Hard Sub", "Soft Sub", "Dub", "Sub & Dub"];
         values = ["sub", "softsub", "dub", "subdub"];
@@ -467,7 +526,7 @@ class DefaultExtension extends MProvider {
             type_name: "GroupFilter",
             name: "Language",
             state: formateState("CheckBox", items, items)
-        })
+        });
 
         return filters;
     }
@@ -535,37 +594,37 @@ class DefaultExtension extends MProvider {
                     value: true
                 }
             },
-        ]
+        ];
     }
 
     formatSubtitles(subtitles, dubType) {
-        var subs = []
+        var subs = [];
         subtitles.forEach(sub => {
             if (!sub.kind.includes("thumbnail")) {
                 subs.push({
                     file: sub.file,
                     label: `${sub.label} - ${dubType}`
-                })
+                });
             }
-        })
-        return subs
+        });
+        return subs;
     }
 
     async formatStreams(sUrl, serverName, dubType) {
         function streamNamer(res) {
-            return `${res} - ${dubType} : ${serverName}`
+            return `${res} - ${dubType} : ${serverName}`;
         }
 
         var streams = [{
             url: sUrl,
             originalUrl: sUrl,
             quality: streamNamer("Auto")
-        }]
+        }];
 
-        var pref = this.getPreference("animekai_pref_extract_streams")
-        if (!pref) return streams
+        var pref = this.getPreference("animekai_pref_extract_streams");
+        if (!pref) return streams;
 
-        var baseUrl = sUrl.split("/list.m3u8")[0].split("/list,")[0]
+        var baseUrl = sUrl.split("/list.m3u8")[0].split("/list,")[0];
 
         const response = await new Client().get(sUrl);
         const body = response.body;
@@ -575,7 +634,7 @@ class DefaultExtension extends MProvider {
             if (lines[i].startsWith('#EXT-X-STREAM-INF:')) {
                 var resolution = lines[i].match(/RESOLUTION=(\d+x\d+)/)[1];
                 var qUrl = lines[i + 1].trim();
-                var m3u8Url = `${baseUrl}/${qUrl}`
+                var m3u8Url = `${baseUrl}/${qUrl}`;
                 streams.push({
                     url: m3u8Url,
                     originalUrl: m3u8Url,
@@ -583,35 +642,35 @@ class DefaultExtension extends MProvider {
                 });
             }
         }
-        return streams
+        return streams;
     }
 
     async getMegaUrl(vidId) {
-        var token = await this.kaiEncrypt(vidId)
-        var res = await this.request(`/ajax/links/view?id=${vidId}&_=${token}`)
-        var body = JSON.parse(res)
-        if (body.status != 200) return
-        var outEnc = body.result
-        var out = await this.kaiDecrypt(outEnc)
-        var o = JSON.parse(out)
-        return decodeURIComponent(o.url)
+        var token = await this.kaiEncrypt(vidId);
+        var res = await this.request(`/ajax/links/view?id=${vidId}&_=${token}`);
+        var body = JSON.parse(res);
+        if (body.status != 200) return;
+        var outEnc = body.result;
+        var out = await this.kaiDecrypt(outEnc);
+        var o = JSON.parse(out);
+        return decodeURIComponent(o.url);
     }
 
     async decryptMegaEmbed(megaUrl, serverName, dubType) {
-        var streams = []
-        megaUrl = megaUrl.replace("/e/", "/media/")
-        var res = await this.client.get(megaUrl)
-        var body = JSON.parse(res.body)
-        if (body.status != 200) return
-        var outEnc = body.result
-        var streamData = await this.megaDecrypt(outEnc)
-        var url = streamData.sources[0].file
+        var streams = [];
+        megaUrl = megaUrl.replace("/e/", "/media/");
+        var res = await this.client.get(megaUrl);
+        var body = JSON.parse(res.body);
+        if (body.status != 200) return;
+        var outEnc = body.result;
+        var streamData = await this.megaDecrypt(outEnc);
+        var url = streamData.sources[0].file;
 
-        var streams = await this.formatStreams(url, serverName, dubType)
+        var streams = await this.formatStreams(url, serverName, dubType);
 
-        var subtitles = streamData.tracks
-        streams[0].subtitles = this.formatSubtitles(subtitles, dubType)
-        return streams
+        var subtitles = streamData.tracks;
+        streams[0].subtitles = this.formatSubtitles(subtitles, dubType);
+        return streams;
     }
 
     base64UrlDecode(input) {
@@ -707,8 +766,8 @@ class DefaultExtension extends MProvider {
         var now_ts = parseInt(new Date().getTime() / 1000);
 
         if (now_ts - pattern_ts > 30 * 60) {
-            var res = await this.client.get("https://raw.githubusercontent.com/amarullz/kaicodex/refs/heads/main/generated/kai_codex.json")
-            pattern = res.body
+            var res = await this.client.get("https://raw.githubusercontent.com/amarullz/kaicodex/refs/heads/main/generated/kai_codex.json");
+            pattern = res.body;
             preferences.setString("anime_kai_decoder_pattern", pattern);
             preferences.setString("anime_kai_decoder_pattern_ts", `${now_ts}`);
         }
@@ -717,11 +776,11 @@ class DefaultExtension extends MProvider {
     }
 
     async patternExecutor(key, type, id) {
-        var result = id
-        var pattern = await this.getDecoderPattern()
-        var logic = pattern[key][type]
+        var result = id;
+        var pattern = await this.getDecoderPattern();
+        var logic = pattern[key][type];
         logic.forEach(step => {
-            var method = step[0]
+            var method = step[0];
             if (method == "urlencode") result = encodeURIComponent(result);
             else if (method == "urldecode") result = decodeURIComponent(result);
             else if (method == "rc4") result = this.transform(step[1], result);
@@ -729,22 +788,22 @@ class DefaultExtension extends MProvider {
             else if (method == "substitute") result = this.substitute(result, step[1], step[2]);
             else if (method == "safeb64_decode") result = this.base64UrlDecode(result);
             else if (method == "safeb64_encode") result = this.base64UrlEncode(result);
-        })
-        return result
+        });
+        return result;
     }
 
     async kaiEncrypt(id) {
-        var token = await this.patternExecutor("kai", "encrypt", id)
+        var token = await this.patternExecutor("kai", "encrypt", id);
         return token;
     }
 
     async kaiDecrypt(id) {
-        var token = await this.patternExecutor("kai", "decrypt", id)
+        var token = await this.patternExecutor("kai", "decrypt", id);
         return token;
     }
 
     async megaDecrypt(data) {
-        var streamData = await this.patternExecutor("megaup", "decrypt", data)
+        var streamData = await this.patternExecutor("megaup", "decrypt", data);
         return JSON.parse(streamData);
     }
 }
