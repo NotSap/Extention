@@ -41,78 +41,95 @@ class DefaultExtension extends MProvider {
         function bundleSlug(category, items) {
             var rd = ""
             for (var item of items) {
-                rd += `&${category}[]=${item.toLowerCase()}`;
+                rd += `&${category}[]=${encodeURIComponent(item.toLowerCase())}`;
             }
             return rd;
         }
 
-        var slug = "/browser?"
+        var slug = "/browser?";
+        
+        if (query && query.trim() !== "") {
+            slug += "keyword=" + encodeURIComponent(query.trim());
+        } else {
+            slug += "keyword=";
+        }
 
-        slug += "keyword=" + encodeURIComponent(query);
-        slug += bundleSlug("type", type);
-        slug += bundleSlug("genre", genre);
-        slug += bundleSlug("status", status);
-        slug += bundleSlug("season", season);
-        slug += bundleSlug("year", year);
-        slug += bundleSlug("rating", rating);
-        slug += bundleSlug("country", country);
-        slug += bundleSlug("language", language);
-        sort = sort.length < 1 ? "updated_date" : sort
+        if (type.length > 0) slug += bundleSlug("type", type);
+        if (genre.length > 0) slug += bundleSlug("genre", genre);
+        if (status.length > 0) slug += bundleSlug("status", status);
+        if (season.length > 0) slug += bundleSlug("season", season);
+        if (year.length > 0) slug += bundleSlug("year", year);
+        if (rating.length > 0) slug += bundleSlug("rating", rating);
+        if (country.length > 0) slug += bundleSlug("country", country);
+        if (language.length > 0) slug += bundleSlug("language", language);
+        
+        sort = sort.length < 1 ? "updated_date" : sort;
         slug += "&sort=" + sort;
-        slug += `&page=${page}`;
+        slug += "&page=" + page;
 
-        var list = []
-
+        var list = [];
         var body = await this.getPage(slug);
 
-        var paginations = body.select(".pagination > li")
-        var hasNextPage = paginations.length > 0 ? !paginations[paginations.length - 1].className.includes("active") : false
+        var noResults = body.selectFirst(".no-results");
+        if (noResults) {
+            return { list, hasNextPage: false };
+        }
 
-        var titlePref = this.getPreference("animekai_title_lang")
-        var animeContainer = body.selectFirst(".aitem-wrapper")
-        if (!animeContainer) return { list, hasNextPage }
+        var paginations = body.select(".pagination > li");
+        var hasNextPage = paginations.length > 0 ? !paginations[paginations.length - 1].className.includes("active") : false;
+
+        var titlePref = this.getPreference("animekai_title_lang");
+        var animeContainer = body.selectFirst(".aitem-wrapper");
         
-        var animes = animeContainer.select(".aitem")
-        animes.forEach(anime => {
-            var link = anime.selectFirst("a").getHref
-            var imageUrl = anime.selectFirst("img").attr("data-src")
-            var name = anime.selectFirst("a.title").attr(titlePref) || anime.selectFirst("a.title").text
-            list.push({ name, link, imageUrl });
-        })
+        if (animeContainer) {
+            var animes = animeContainer.select(".aitem");
+            animes.forEach(anime => {
+                var link = anime.selectFirst("a").getHref;
+                var imageUrl = anime.selectFirst("img").attr("data-src");
+                var titleElement = anime.selectFirst("a.title");
+                var name = titlePref.includes("jp") ? titleElement.attr(titlePref) || titleElement.text : titleElement.text;
+                
+                if (name && link && imageUrl) {
+                    list.push({ name, link, imageUrl });
+                }
+            });
+        }
 
-        return { list, hasNextPage }
+        return { list, hasNextPage };
     }
 
     async getPopular(page) {
-        var types = this.getPreference("animekai_popular_latest_type")
+        var types = this.getPreference("animekai_popular_latest_type");
         return await this.searchPage({ sort: "trending", type: types, page: page });
     }
 
     async getLatestUpdates(page) {
-        var types = this.getPreference("animekai_popular_latest_type")
+        var types = this.getPreference("animekai_popular_latest_type");
         return await this.searchPage({ sort: "updated_date", type: types, page: page });
     }
 
     async search(query, page, filters) {
         function getFilter(state) {
-            var rd = []
-            state.forEach(item => {
-                if (item.state) {
-                    rd.push(item.value)
-                }
-            })
-            return rd
+            var rd = [];
+            if (state) {
+                state.forEach(item => {
+                    if (item.state) {
+                        rd.push(item.value);
+                    }
+                });
+            }
+            return rd;
         }
         
-        var type = filters && filters.length > 0 ? getFilter(filters[0].state) : []
-        var genre = filters && filters.length > 1 ? getFilter(filters[1].state) : []
-        var status = filters && filters.length > 2 ? getFilter(filters[2].state) : []
-        var sort = filters && filters.length > 3 ? filters[3].values[filters[3].state].value : ""
-        var season = filters && filters.length > 4 ? getFilter(filters[4].state) : []
-        var year = filters && filters.length > 5 ? getFilter(filters[5].state) : []
-        var rating = filters && filters.length > 6 ? getFilter(filters[6].state) : []
-        var country = filters && filters.length > 7 ? getFilter(filters[7].state) : []
-        var language = filters && filters.length > 8 ? getFilter(filters[8].state) : []
+        var type = filters && filters.length > 0 ? getFilter(filters[0].state) : [];
+        var genre = filters && filters.length > 1 ? getFilter(filters[1].state) : [];
+        var status = filters && filters.length > 2 ? getFilter(filters[2].state) : [];
+        var sort = filters && filters.length > 3 ? filters[3].values[filters[3].state].value : "";
+        var season = filters && filters.length > 4 ? getFilter(filters[4].state) : [];
+        var year = filters && filters.length > 5 ? getFilter(filters[5].state) : [];
+        var rating = filters && filters.length > 6 ? getFilter(filters[6].state) : [];
+        var country = filters && filters.length > 7 ? getFilter(filters[7].state) : [];
+        var language = filters && filters.length > 8 ? getFilter(filters[8].state) : [];
         
         return await this.searchPage({ 
             query, 
@@ -138,38 +155,36 @@ class DefaultExtension extends MProvider {
             }[status] ?? 5;
         }
 
-        var slug = url
-        var link = this.getBaseUrl() + slug
-        var body = await this.getPage(slug)
+        var slug = url;
+        var link = this.getBaseUrl() + slug;
+        var body = await this.getPage(slug);
 
-        var mainSection = body.selectFirst(".watch-section")
+        var mainSection = body.selectFirst(".watch-section");
         if (!mainSection) return null;
 
-        var imageUrl = mainSection.selectFirst("div.poster").selectFirst("img").getSrc
+        var imageUrl = mainSection.selectFirst("div.poster")?.selectFirst("img")?.getSrc || "";
 
-        var namePref = this.getPreference("animekai_title_lang")
-        var nameSection = mainSection.selectFirst("div.title")
-        var name = namePref.includes("jp") ? nameSection.attr(namePref) : nameSection.text
+        var namePref = this.getPreference("animekai_title_lang");
+        var nameSection = mainSection.selectFirst("div.title");
+        var name = namePref.includes("jp") ? nameSection?.attr(namePref) || nameSection?.text : nameSection?.text || "No title";
 
-        var description = mainSection.selectFirst("div.desc").text
+        var description = mainSection.selectFirst("div.desc")?.text || "No description";
 
-        var detailSection = mainSection.select("div.detail > div")
+        var detailSection = mainSection.select("div.detail > div");
 
-        var genre = []
-        var status = 5
+        var genre = [];
+        var status = 5;
         detailSection.forEach(item => {
-            var itemText = item.text.trim()
-
+            var itemText = item.text.trim();
             if (itemText.includes("Genres")) {
-                genre = itemText.replace("Genres:  ", "").split(", ")
+                genre = itemText.replace("Genres:  ", "").split(", ");
             }
             if (itemText.includes("Status")) {
-                var statusText = item.selectFirst("span").text
-                status = statusCode(statusText)
+                var statusText = item.selectFirst("span")?.text;
+                if (statusText) status = statusCode(statusText);
             }
-        })
+        });
 
-        // Get Anify information
         var anifyInfo = {};
         try {
             var anifySection = body.selectFirst(".anify-info");
@@ -199,61 +214,71 @@ class DefaultExtension extends MProvider {
             console.log("Error getting Anify info: " + e);
         }
 
-        var chapters = []
-        var animeId = body.selectFirst("#anime-rating").attr("data-id")
+        var chapters = [];
+        var animeRating = body.selectFirst("#anime-rating");
+        if (!animeRating) return { name, imageUrl, link, description, genre, status, chapters, anifyInfo };
 
-        var token = await this.kaiEncrypt(animeId)
-        var res = await this.request(`/ajax/episodes/list?ani_id=${animeId}&_=${token}`)
-        body = JSON.parse(res)
-        if (body.status == 200) {
-            var doc = new Document(body["result"])
-            var episodes = doc.selectFirst("div.eplist.titles").select("li")
-            var showUncenEp = this.getPreference("animekai_show_uncen_epsiodes")
+        var animeId = animeRating.attr("data-id");
+        if (!animeId) return { name, imageUrl, link, description, genre, status, chapters, anifyInfo };
 
-            for (var item of episodes) {
-                var aTag = item.selectFirst("a")
+        var token = await this.kaiEncrypt(animeId);
+        var res = await this.request(`/ajax/episodes/list?ani_id=${animeId}&_=${token}`);
+        var episodeData = JSON.parse(res);
+        
+        if (episodeData.status == 200) {
+            var doc = new Document(episodeData["result"]);
+            var episodesList = doc.selectFirst("div.eplist.titles");
+            if (episodesList) {
+                var episodes = episodesList.select("li");
+                var showUncenEp = this.getPreference("animekai_show_uncen_epsiodes");
 
-                var num = parseInt(aTag.attr("num"))
-                var title = aTag.selectFirst("span").text
-                title = title.includes("Episode") ? "" : `: ${title}`
-                var epName = `Episode ${num}${title}`
+                for (var item of episodes) {
+                    var aTag = item.selectFirst("a");
+                    if (!aTag) continue;
 
-                var langs = aTag.attr("langs")
-                var scanlator = langs === "1" ? "SUB" : "SUB, DUB"
+                    var num = parseInt(aTag.attr("num")) || 0;
+                    var title = aTag.selectFirst("span")?.text || "";
+                    title = title.includes("Episode") ? "" : `: ${title}`;
+                    var epName = `Episode ${num}${title}`;
 
-                var token = aTag.attr("token")
+                    var langs = aTag.attr("langs") || "1";
+                    var scanlator = langs === "1" ? "SUB" : "SUB, DUB";
 
-                var epData = {
-                    name: epName,
-                    url: token,
-                    scanlator
-                }
+                    var token = aTag.attr("token");
+                    if (!token) continue;
 
-                var slug = aTag.attr("slug")
-                if (slug.includes("uncen")) {
-                    if (!showUncenEp) continue
-
-                    scanlator += ", UNCENSORED"
-                    epName = `Episode ${num}: (Uncensored)`
-                    epData = {
+                    var epData = {
                         name: epName,
                         url: token,
                         scanlator
-                    }
+                    };
 
-                    var exData = chapters[num - 1]
-                    if (exData) {
-                        exData.url += "||" + epData.url
-                        exData.scanlator += ", " + epData.scanlator
-                        chapters[num - 1] = exData
-                        continue
+                    var slug = aTag.attr("slug") || "";
+                    if (slug.includes("uncen")) {
+                        if (!showUncenEp) continue;
+
+                        scanlator += ", UNCENSORED";
+                        epName = `Episode ${num}: (Uncensored)`;
+                        epData = {
+                            name: epName,
+                            url: token,
+                            scanlator
+                        };
+
+                        var exData = chapters[num - 1];
+                        if (exData) {
+                            exData.url += "||" + epData.url;
+                            exData.scanlator += ", " + epData.scanlator;
+                            chapters[num - 1] = exData;
+                            continue;
+                        }
                     }
+                    chapters.push(epData);
                 }
-                chapters.push(epData)
             }
         }
-        chapters.reverse()
         
+        chapters.reverse();
         return { 
             name, 
             imageUrl, 
@@ -263,7 +288,7 @@ class DefaultExtension extends MProvider {
             status, 
             chapters,
             anifyInfo 
-        }
+        };
     }
 
     async getVideoList(url) {
