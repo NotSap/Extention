@@ -21,530 +21,204 @@ class DefaultExtension extends MProvider {
     }
 
     getBaseUrl() {
-        return this.getPreference("animekai_base_url");
+        return this.getPreference("animekai_base_url") || "https://animekai.to";
     }
 
     async request(slug) {
-        var url = slug;
-        var baseUrl = this.getBaseUrl();
-        if (!slug.includes(baseUrl)) url = baseUrl + slug;
-        var res = await this.client.get(url);
-        return res.body;
+        try {
+            var url = slug;
+            var baseUrl = this.getBaseUrl();
+            if (!slug.includes(baseUrl)) url = baseUrl + slug;
+            var res = await this.client.get(url);
+            return res.body;
+        } catch (e) {
+            console.log("Request failed:", e);
+            return null;
+        }
     }
 
     async getPage(slug) {
         var res = await this.request(slug);
-        return new Document(res);
+        return res ? new Document(res) : null;
     }
 
-    async searchPage({ query = "", type = [], genre = [], status = [], sort = "", season = [], year = [], rating = [], country = [], language = [], page = 1 } = {}) {
-        // Build search URL with all parameters
-        var slug = "/filter?";
-        const params = new URLSearchParams();
-        
-        if (query && query.trim() !== "") {
-            params.append("keyword", query.trim());
-        }
+    async searchPage({ query = "", page = 1, ...filters } = {}) {
+        try {
+            const params = new URLSearchParams();
+            if (query) params.append("keyword", query.trim());
+            params.append("page", page);
+            
+            // Add all filter parameters
+            Object.entries(filters).forEach(([key, values]) => {
+                if (Array.isArray(values)) values.forEach(v => params.append(`${key}[]`, v));
+            });
 
-        type.forEach(t => params.append("type[]", t));
-        genre.forEach(g => params.append("genre[]", g));
-        status.forEach(s => params.append("status[]", s));
-        season.forEach(s => params.append("season[]", s));
-        year.forEach(y => params.append("year[]", y));
-        rating.forEach(r => params.append("rating[]", r));
-        country.forEach(c => params.append("country[]", c));
-        language.forEach(l => params.append("language[]", l));
-        
-        params.append("sort", sort || "updated_date");
-        params.append("page", page);
+            const body = await this.getPage(`/filter?${params.toString()}`);
+            if (!body) return { list: [], hasNextPage: false };
 
-        slug += params.toString();
-
-        var list = [];
-        var body = await this.getPage(slug);
-
-        // More reliable anime item detection
-        var animeItems = body.select(".film-list > .film-item, .items > .item, .anime-list > .anime-item");
-        
-        if (animeItems.length === 0) {
-            // Alternative detection method
-            animeItems = body.select("div[class*='item'], div[class*='film'], div[class*='anime']");
-        }
-
-        var titlePref = this.getPreference("animekai_title_lang");
-
-        animeItems.forEach(item => {
-            try {
-                var linkElement = item.selectFirst("a[href*='/watch/'], a[href*='/anime/']");
-                if (!linkElement) return;
-
-                var link = linkElement.getHref;
-                if (!link || !link.includes("/watch/") && !link.includes("/anime/")) return;
-
-                var imageElement = item.selectFirst("img[data-src], img[src]");
-                var imageUrl = imageElement?.attr("data-src") || imageElement?.getSrc || "";
-
-                var titleElement = item.selectFirst(".film-name, .name, .title");
-                var name = titlePref.includes("jp") ? 
-                    (titleElement?.attr(titlePref) || titleElement?.text) : 
-                    (titleElement?.text || "");
-
-                if (name && link) {
-                    list.push({ 
-                        name: name.trim(),
-                        link: link.startsWith("/") ? link : "/" + link,
-                        imageUrl 
-                    });
+            const list = [];
+            const items = body.select(".film-list > .film-item, .items > .item");
+            
+            items.forEach(item => {
+                try {
+                    const link = item.selectFirst("a")?.getHref;
+                    const image = item.selectFirst("img")?.attr("data-src") || item.selectFirst("img")?.getSrc;
+                    const title = item.selectFirst(".film-name, .name")?.text?.trim();
+                    
+                    if (link && title) {
+                        list.push({
+                            name: title,
+                            link: link.startsWith("/") ? link : `/${link}`,
+                            imageUrl: image
+                        });
+                    }
+                } catch (e) {
+                    console.log("Error parsing item:", e);
                 }
-            } catch (e) {
-                console.log("Error parsing anime item: " + e);
-            }
-        });
+            });
 
-        // Improved pagination detection
-        var pagination = body.selectFirst(".pagination, .page-links");
-        var hasNextPage = false;
-        
-        if (pagination) {
-            var lastPageItem = pagination.select("li, a").pop();
-            if (lastPageItem) {
-                hasNextPage = !lastPageItem.className?.includes("active") && 
-                             !lastPageItem.className?.includes("disabled") &&
-                             (lastPageItem.text?.toLowerCase().includes("next") || 
-                              lastPageItem.selectFirst("i[class*='next']"));
-            }
+            const hasNextPage = body.select(".pagination a:contains(Next)").length > 0;
+            return { list, hasNextPage };
+        } catch (e) {
+            console.log("Search failed:", e);
+            return { list: [], hasNextPage: false };
         }
-
-        return { 
-            list, 
-            hasNextPage 
-        };
     }
 
     async getPopular(page) {
-        var types = this.getPreference("animekai_popular_latest_type");
-        return await this.searchPage({ 
-            sort: "trending", 
-            type: types, 
-            page: page 
+        const types = this.getPreference("animekai_popular_latest_type") || ["tv", "movie"];
+        return this.searchPage({ 
+            sort: "trending",
+            type: types,
+            page
         });
     }
 
     async getLatestUpdates(page) {
-        var types = this.getPreference("animekai_popular_latest_type");
-        return await this.searchPage({ 
-            sort: "updated_date", 
-            type: types, 
-            page: page 
+        const types = this.getPreference("animekai_popular_latest_type") || ["tv", "movie"];
+        return this.searchPage({
+            sort: "updated_date",
+            type: types,
+            page
         });
     }
 
     async search(query, page, filters) {
-        function getFilter(state) {
-            var rd = [];
-            if (state) {
-                state.forEach(item => {
-                    if (item.state) {
-                        rd.push(item.value);
-                    }
-                });
-            }
-            return rd;
+        const filterValues = {};
+        if (filters) {
+            filters.forEach((filter, index) => {
+                const key = ["type","genre","status","season","year","rating","country","language"][index];
+                filterValues[key] = filter.state?.filter(s => s.state).map(s => s.value) || [];
+            });
         }
-        
-        var type = filters && filters.length > 0 ? getFilter(filters[0].state) : [];
-        var genre = filters && filters.length > 1 ? getFilter(filters[1].state) : [];
-        var status = filters && filters.length > 2 ? getFilter(filters[2].state) : [];
-        var sort = filters && filters.length > 3 ? filters[3].values[filters[3].state].value : "";
-        var season = filters && filters.length > 4 ? getFilter(filters[4].state) : [];
-        var year = filters && filters.length > 5 ? getFilter(filters[5].state) : [];
-        var rating = filters && filters.length > 6 ? getFilter(filters[6].state) : [];
-        var country = filters && filters.length > 7 ? getFilter(filters[7].state) : [];
-        var language = filters && filters.length > 8 ? getFilter(filters[8].state) : [];
-        
-        return await this.searchPage({ 
-            query, 
-            type, 
-            genre, 
-            status, 
-            sort, 
-            season, 
-            year, 
-            rating, 
-            country, 
-            language, 
-            page 
-        });
+        return this.searchPage({ query, page, ...filterValues });
     }
 
-}
-
     async getDetail(url) {
-        function statusCode(status) {
-            return {
-                "Releasing": 0,
-                "Completed": 1,
-                "Not Yet Aired": 4,
-            }[status] ?? 5;
-        }
-
-        var slug = url;
-        var link = this.getBaseUrl() + slug;
-        var body = await this.getPage(slug);
-
-        // Try multiple main section selectors
-        var mainSectionSelectors = [
-            ".watch-section",
-            ".anime-detail",
-            ".detail",
-            ".main-content",
-            ".anime-info"
-        ];
-
-        var mainSection = null;
-        for (var selector of mainSectionSelectors) {
-            mainSection = body.selectFirst(selector);
-            if (mainSection) break;
-        }
-
-        if (!mainSection) return null;
-
-        // Try multiple image selectors
-        var imageElement = null;
-        var imageSelectors = [
-            "div.poster img",
-            ".thumb img",
-            "img.poster",
-            ".cover img",
-            "img.cover"
-        ];
-
-        for (var selector of imageSelectors) {
-            imageElement = mainSection.selectFirst(selector);
-            if (imageElement) break;
-        }
-
-        var imageUrl = imageElement?.getSrc || 
-                     imageElement?.attr("data-src") || 
-                     "";
-
-        // Get title
-        var namePref = this.getPreference("animekai_title_lang");
-        var nameSection = null;
-        var nameSelectors = [
-            "div.title",
-            ".info h1",
-            "h1.title",
-            ".anime-title",
-            "h1.name"
-        ];
-
-        for (var selector of nameSelectors) {
-            nameSection = mainSection.selectFirst(selector);
-            if (nameSection) break;
-        }
-
-        var name = namePref.includes("jp") ? 
-            (nameSection?.attr(namePref) || nameSection?.text) : 
-            (nameSection?.text || "No title");
-
-        // Get description
-        var descriptionSelectors = [
-            "div.desc",
-            ".description",
-            ".synopsis",
-            ".summary",
-            ".plot"
-        ];
-
-        var description = "No description";
-        for (var selector of descriptionSelectors) {
-            var descElement = mainSection.selectFirst(selector);
-            if (descElement) {
-                description = descElement.text || description;
-                break;
-            }
-        }
-
-        // Get details
-        var detailSelectors = [
-            "div.detail > div",
-            ".meta div",
-            ".info div",
-            ".details div",
-            ".anime-meta"
-        ];
-
-        var detailSection = [];
-        for (var selector of detailSelectors) {
-            var found = mainSection.select(selector);
-            if (found.length > 0) {
-                detailSection = found;
-                break;
-            }
-        }
-
-        var genre = [];
-        var status = 5;
-        detailSection.forEach(item => {
-            var itemText = item.text.trim();
-            if (itemText.match(/Genres?:?/i)) {
-                genre = itemText.replace(/Genres?:?\s*/i, "")
-                               .split(/,| /)
-                               .filter(g => g.trim());
-            }
-            if (itemText.includes("Status")) {
-                var statusText = item.selectFirst("span")?.text;
-                if (statusText) status = statusCode(statusText);
-            }
-        });
-
-        // Get Anify information
-        var anifyInfo = {};
         try {
-            var anifySectionSelectors = [
-                ".anify-info",
-                "[data-mal-id]",
-                ".anime-external"
-            ];
+            const body = await this.getPage(url);
+            if (!body) return null;
 
-            var anifySection = null;
-            for (var selector of anifySectionSelectors) {
-                anifySection = body.selectFirst(selector);
-                if (anifySection) break;
+            const main = body.selectFirst(".watch-section, .anime-detail");
+            if (!main) return null;
+
+            const details = {
+                name: main.selectFirst(".title, h1")?.text?.trim() || "Unknown",
+                imageUrl: main.selectFirst("img")?.getSrc || "",
+                link: url,
+                description: main.selectFirst(".desc, .description")?.text?.trim() || "",
+                genre: [],
+                status: 0,
+                chapters: [],
+                anifyInfo: {}
+            };
+
+            // Extract metadata
+            main.select(".detail > div, .meta > div").forEach(item => {
+                const text = item.text?.trim();
+                if (text?.includes("Genres")) {
+                    details.genre = text.replace("Genres:", "").split(",").map(g => g.trim());
+                } else if (text?.includes("Status")) {
+                    details.status = text.includes("Ongoing") ? 0 : 1;
+                }
+            });
+
+            // Extract episodes
+            const animeId = body.selectFirst("[data-id]")?.attr("data-id");
+            if (animeId) {
+                const token = await this.kaiEncrypt(animeId);
+                const res = await this.request(`/ajax/episodes/list?ani_id=${animeId}&_=${token}`);
+                if (res) {
+                    const data = JSON.parse(res);
+                    if (data.status === 200) {
+                        const doc = new Document(data.result);
+                        doc.select("li").forEach(ep => {
+                            const a = ep.selectFirst("a");
+                            if (a) {
+                                details.chapters.push({
+                                    name: `Episode ${a.attr("num")}`,
+                                    url: a.attr("token"),
+                                    scanlator: a.attr("langs") === "1" ? "SUB" : "DUB"
+                                });
+                            }
+                        });
+                        details.chapters.reverse();
+                    }
+                }
             }
 
-            if (anifySection) {
-                anifyInfo = {
-                    malId: anifySection.attr("data-mal-id") || "",
-                    anilistId: anifySection.attr("data-anilist-id") || "",
-                    kitsuId: anifySection.attr("data-kitsu-id") || "",
-                    type: anifySection.attr("data-type") || "",
-                    format: anifySection.attr("data-format") || "",
-                    season: anifySection.attr("data-season") || "",
-                    year: anifySection.attr("data-year") || "",
-                    status: anifySection.attr("data-status") || "",
-                    episodes: anifySection.attr("data-episodes") || "",
-                    duration: anifySection.attr("data-duration") || "",
-                    countryOfOrigin: anifySection.attr("data-country-of-origin") || "",
-                    source: anifySection.attr("data-source") || "",
-                    coverImage: anifySection.attr("data-cover-image") || "",
-                    bannerImage: anifySection.attr("data-banner-image") || "",
-                    popularity: anifySection.attr("data-popularity") || "",
-                    averageScore: anifySection.attr("data-average-score") || "",
-                    meanScore: anifySection.attr("data-mean-score") || "",
-                    synonyms: anifySection.attr("data-synonyms") || ""
-                };
-            }
+            return details;
         } catch (e) {
-            console.log("Error getting Anify info: " + e);
+            console.log("Failed to get details:", e);
+            return null;
         }
-
-        // Get episodes
-        var chapters = [];
-        var animeRatingSelectors = [
-            "#anime-rating",
-            "[data-id]",
-            ".anime-id"
-        ];
-
-        var animeRating = null;
-        for (var selector of animeRatingSelectors) {
-            animeRating = body.selectFirst(selector);
-            if (animeRating) break;
-        }
-
-        if (!animeRating) {
-            return { 
-                name, 
-                imageUrl, 
-                link, 
-                description, 
-                genre, 
-                status, 
-                chapters,
-                anifyInfo 
-            };
-        }
-
-        var animeId = animeRating.attr("data-id");
-        if (!animeId) {
-            return { 
-                name, 
-                imageUrl, 
-                link, 
-                description, 
-                genre, 
-                status, 
-                chapters,
-                anifyInfo 
-            };
-        }
-
-        var token = await this.kaiEncrypt(animeId);
-        var res = await this.request(`/ajax/episodes/list?ani_id=${animeId}&_=${token}`);
-        var episodeData = JSON.parse(res);
-        
-        if (episodeData.status == 200) {
-            var doc = new Document(episodeData["result"]);
-            
-            var episodesListSelectors = [
-                "div.eplist.titles",
-                ".episode-list",
-                ".episodes",
-                ".server-list"
-            ];
-
-            var episodesList = null;
-            for (var selector of episodesListSelectors) {
-                episodesList = doc.selectFirst(selector);
-                if (episodesList) break;
-            }
-
-            if (episodesList) {
-                var episodeSelectors = [
-                    "li",
-                    ".episode-item",
-                    ".episode"
-                ];
-
-                var episodes = [];
-                for (var selector of episodeSelectors) {
-                    var found = episodesList.select(selector);
-                    if (found.length > 0) {
-                        episodes = found;
-                        break;
-                    }
-                }
-
-                var showUncenEp = this.getPreference("animekai_show_uncen_epsiodes");
-
-                for (var item of episodes) {
-                    var aTag = item.selectFirst("a");
-                    if (!aTag) continue;
-
-                    var num = parseInt(aTag.attr("num") || 
-                              aTag.text.match(/\d+/)?.[0] || 
-                              0);
-                    var title = aTag.selectFirst("span")?.text || "";
-                    title = title.includes("Episode") ? "" : `: ${title}`;
-                    var epName = `Episode ${num}${title}`;
-
-                    var langs = aTag.attr("langs") || "1";
-                    var scanlator = langs === "1" ? "SUB" : "SUB, DUB";
-
-                    var token = aTag.attr("token") || aTag.attr("data-id") || "";
-                    if (!token) continue;
-
-                    var epData = {
-                        name: epName,
-                        url: token,
-                        scanlator
-                    };
-
-                    var slug = aTag.attr("slug") || "";
-                    if (slug.includes("uncen")) {
-                        if (!showUncenEp) continue;
-
-                        scanlator += ", UNCENSORED";
-                        epName = `Episode ${num}: (Uncensored)`;
-                        epData = {
-                            name: epName,
-                            url: token,
-                            scanlator
-                        };
-
-                        var exData = chapters[num - 1];
-                        if (exData) {
-                            exData.url += "||" + epData.url;
-                            exData.scanlator += ", " + epData.scanlator;
-                            chapters[num - 1] = exData;
-                            continue;
-                        }
-                    }
-                    chapters.push(epData);
-                }
-            }
-        }
-        
-        chapters.reverse();
-        return { 
-            name, 
-            imageUrl, 
-            link, 
-            description, 
-            genre, 
-            status, 
-            chapters,
-            anifyInfo 
-        };
     }
 
     async getVideoList(url) {
-        var streams = [];
-        var prefServer = this.getPreference("animekai_pref_stream_server");
-        if (prefServer.length < 1) prefServer.push("1");
+        try {
+            const streams = [];
+            const servers = this.getPreference("animekai_pref_stream_server") || ["1"];
+            const dubTypes = this.getPreference("animekai_pref_stream_subdub_type") || ["sub"];
 
-        var prefDubType = this.getPreference("animekai_pref_stream_subdub_type");
-        if (prefDubType.length < 1) prefDubType.push("sub");
+            for (const epId of url.split("||")) {
+                const token = await this.kaiEncrypt(epId);
+                const res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
+                if (!res) continue;
 
-        var epSlug = url.split("||");
+                const data = JSON.parse(res);
+                if (data.status !== 200) continue;
 
-        var isUncensoredVersion = false;
-        for (var epId of epSlug) {
-            var token = await this.kaiEncrypt(epId);
-            var res = await this.request(`/ajax/links/list?token=${epId}&_=${token}`);
-            var body = JSON.parse(res);
-            if (body.status != 200) continue;
+                const doc = new Document(data.result);
+                doc.select("div.server-items").forEach(server => {
+                    const type = server.attr("data-id");
+                    if (!dubTypes.includes(type)) return;
 
-            var serverResult = new Document(body.result);
-
-            var SERVERDATA = [];
-            var server_items = serverResult.select("div.server-items");
-
-            for (var dubSection of server_items) {
-                var dubType = dubSection.attr("data-id");
-                if (!prefDubType.includes(dubType)) continue;
-
-                for (var ser of dubSection.select("span.server")) {
-                    var serverName = ser.text;
-                    if (!prefServer.includes(serverName.replace("Server ", ""))) continue;
-
-                    var dataId = ser.attr("data-lid");
-                    SERVERDATA.push({
-                        serverName,
-                        dataId,
-                        dubType
+                    server.select("span.server").forEach(s => {
+                        if (servers.includes(s.text.replace("Server ", ""))) {
+                            const lid = s.attr("data-lid");
+                            if (lid) streams.push({ server: s.text, lid, type });
+                        }
                     });
-                }
+                });
             }
 
-            for (var serverData of SERVERDATA) {
-                var serverName = serverData.serverName;
-                var dataId = serverData.dataId;
-                var dubType = serverData.dubType.toUpperCase();
-                dubType = dubType == "SUB" ? "HARDSUB" : dubType;
-                dubType = isUncensoredVersion ? `${dubType} [Uncensored]` : dubType;
+            const results = [];
+            for (const stream of streams) {
+                const megaUrl = await this.getMegaUrl(stream.lid);
+                if (!megaUrl) continue;
 
-                var megaUrl = await this.getMegaUrl(dataId);
-                var serverStreams = await this.decryptMegaEmbed(megaUrl, serverName, dubType);
-                streams = [...streams, ...serverStreams];
-
-                if (dubType.includes("DUB")) {
-                    if (!megaUrl.includes("sub.list=")) continue;
-                    var subList = megaUrl.split("sub.list=")[1];
-
-                    var subres = await this.client.get(subList);
-                    var subtitles = JSON.parse(subres.body);
-                    var subs = this.formatSubtitles(subtitles, dubType);
-                    streams[streams.length - 1].subtitles = subs;
-                }
+                const embed = await this.decryptMegaEmbed(megaUrl, stream.server, stream.type.toUpperCase());
+                if (embed) results.push(...embed);
             }
-            isUncensoredVersion = true;
+
+            return results;
+        } catch (e) {
+            console.log("Failed to get video list:", e);
+            return [];
         }
-
-        return streams;
     }
+
+}
 
     getFilterList() {
         function formateState(type_name, items, values) {
