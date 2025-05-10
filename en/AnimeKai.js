@@ -67,30 +67,65 @@ class DefaultExtension extends MProvider {
         var list = [];
         var body = await this.getPage(slug);
 
-        // First try the original container
-        var animeContainer = body.selectFirst(".aitem-wrapper");
-        
-        // Fallback to alternative containers if primary not found
-        if (!animeContainer) {
-            animeContainer = body.selectFirst(".list-update") || 
-                            body.selectFirst(".anime-list") || 
-                            body.selectFirst(".items");
+        // Try multiple container selectors
+        var animeContainers = [
+            ".aitem-wrapper",
+            ".list-update",
+            ".anime-list",
+            ".items",
+            ".film-list",
+            ".list-items"
+        ];
+
+        var animeContainer = null;
+        for (var container of animeContainers) {
+            animeContainer = body.selectFirst(container);
+            if (animeContainer) break;
         }
 
         if (animeContainer) {
-            var animes = animeContainer.select(".aitem, .anime-item, .list-item, .item");
+            // Try multiple item selectors
+            var animeSelectors = [
+                ".aitem",
+                ".anime-item",
+                ".list-item",
+                ".item",
+                ".film-item",
+                ".list-item"
+            ];
+
+            var animes = [];
+            for (var selector of animeSelectors) {
+                var found = animeContainer.select(selector);
+                if (found.length > 0) {
+                    animes = found;
+                    break;
+                }
+            }
+
             animes.forEach(anime => {
                 try {
-                    var link = anime.selectFirst("a")?.getHref;
+                    // Try multiple link selectors
+                    var linkElement = anime.selectFirst("a");
+                    if (!linkElement) return;
+                    
+                    var link = linkElement.getHref;
                     if (!link) return;
                     
+                    // Try multiple image selectors
                     var imageElement = anime.selectFirst("img");
                     var imageUrl = imageElement?.attr("data-src") || 
                                  imageElement?.getSrc || 
                                  "";
                     
-                    var titleElement = anime.selectFirst("a.title, .name, .title");
+                    // Try multiple title selectors
+                    var titleElement = anime.selectFirst("a.title, .name, .title, .film-name");
                     var name = titleElement?.text?.trim();
+                    if (!name) {
+                        name = titleElement?.attr("title") || 
+                              titleElement?.attr("data-title") || 
+                              "";
+                    }
                     
                     if (name && link) {
                         list.push({ 
@@ -105,10 +140,16 @@ class DefaultExtension extends MProvider {
             });
         }
 
-        var paginations = body.select(".pagination > li, .pagination a");
-        var hasNextPage = paginations.length > 0 ? 
-            !paginations[paginations.length - 1].className?.includes("active") : 
-            false;
+        // Check pagination
+        var paginations = body.select(".pagination > li, .pagination a, .page-links a");
+        var hasNextPage = false;
+        
+        if (paginations.length > 0) {
+            var lastPageItem = paginations[paginations.length - 1];
+            hasNextPage = !lastPageItem.className?.includes("active") && 
+                         !lastPageItem.className?.includes("disabled") &&
+                         lastPageItem.text?.toLowerCase().includes("next");
+        }
 
         return { 
             list, 
@@ -185,24 +226,97 @@ class DefaultExtension extends MProvider {
         var link = this.getBaseUrl() + slug;
         var body = await this.getPage(slug);
 
-        var mainSection = body.selectFirst(".watch-section, .anime-detail, .detail");
+        // Try multiple main section selectors
+        var mainSectionSelectors = [
+            ".watch-section",
+            ".anime-detail",
+            ".detail",
+            ".main-content",
+            ".anime-info"
+        ];
+
+        var mainSection = null;
+        for (var selector of mainSectionSelectors) {
+            mainSection = body.selectFirst(selector);
+            if (mainSection) break;
+        }
+
         if (!mainSection) return null;
 
-        var imageElement = mainSection.selectFirst("div.poster img, .thumb img, img.poster");
+        // Try multiple image selectors
+        var imageElement = null;
+        var imageSelectors = [
+            "div.poster img",
+            ".thumb img",
+            "img.poster",
+            ".cover img",
+            "img.cover"
+        ];
+
+        for (var selector of imageSelectors) {
+            imageElement = mainSection.selectFirst(selector);
+            if (imageElement) break;
+        }
+
         var imageUrl = imageElement?.getSrc || 
                      imageElement?.attr("data-src") || 
                      "";
 
+        // Get title
         var namePref = this.getPreference("animekai_title_lang");
-        var nameSection = mainSection.selectFirst("div.title, .info h1, h1.title");
+        var nameSection = null;
+        var nameSelectors = [
+            "div.title",
+            ".info h1",
+            "h1.title",
+            ".anime-title",
+            "h1.name"
+        ];
+
+        for (var selector of nameSelectors) {
+            nameSection = mainSection.selectFirst(selector);
+            if (nameSection) break;
+        }
+
         var name = namePref.includes("jp") ? 
             (nameSection?.attr(namePref) || nameSection?.text) : 
             (nameSection?.text || "No title");
 
-        var description = mainSection.selectFirst("div.desc, .description, .synopsis")?.text || 
-                         "No description";
+        // Get description
+        var descriptionSelectors = [
+            "div.desc",
+            ".description",
+            ".synopsis",
+            ".summary",
+            ".plot"
+        ];
 
-        var detailSection = mainSection.select("div.detail > div, .meta div, .info div");
+        var description = "No description";
+        for (var selector of descriptionSelectors) {
+            var descElement = mainSection.selectFirst(selector);
+            if (descElement) {
+                description = descElement.text || description;
+                break;
+            }
+        }
+
+        // Get details
+        var detailSelectors = [
+            "div.detail > div",
+            ".meta div",
+            ".info div",
+            ".details div",
+            ".anime-meta"
+        ];
+
+        var detailSection = [];
+        for (var selector of detailSelectors) {
+            var found = mainSection.select(selector);
+            if (found.length > 0) {
+                detailSection = found;
+                break;
+            }
+        }
 
         var genre = [];
         var status = 5;
@@ -222,7 +336,18 @@ class DefaultExtension extends MProvider {
         // Get Anify information
         var anifyInfo = {};
         try {
-            var anifySection = body.selectFirst(".anify-info, [data-mal-id]");
+            var anifySectionSelectors = [
+                ".anify-info",
+                "[data-mal-id]",
+                ".anime-external"
+            ];
+
+            var anifySection = null;
+            for (var selector of anifySectionSelectors) {
+                anifySection = body.selectFirst(selector);
+                if (anifySection) break;
+            }
+
             if (anifySection) {
                 anifyInfo = {
                     malId: anifySection.attr("data-mal-id") || "",
@@ -249,8 +374,20 @@ class DefaultExtension extends MProvider {
             console.log("Error getting Anify info: " + e);
         }
 
+        // Get episodes
         var chapters = [];
-        var animeRating = body.selectFirst("#anime-rating, [data-id]");
+        var animeRatingSelectors = [
+            "#anime-rating",
+            "[data-id]",
+            ".anime-id"
+        ];
+
+        var animeRating = null;
+        for (var selector of animeRatingSelectors) {
+            animeRating = body.selectFirst(selector);
+            if (animeRating) break;
+        }
+
         if (!animeRating) {
             return { 
                 name, 
@@ -284,9 +421,36 @@ class DefaultExtension extends MProvider {
         
         if (episodeData.status == 200) {
             var doc = new Document(episodeData["result"]);
-            var episodesList = doc.selectFirst("div.eplist.titles, .episode-list, .episodes");
+            
+            var episodesListSelectors = [
+                "div.eplist.titles",
+                ".episode-list",
+                ".episodes",
+                ".server-list"
+            ];
+
+            var episodesList = null;
+            for (var selector of episodesListSelectors) {
+                episodesList = doc.selectFirst(selector);
+                if (episodesList) break;
+            }
+
             if (episodesList) {
-                var episodes = episodesList.select("li, .episode-item");
+                var episodeSelectors = [
+                    "li",
+                    ".episode-item",
+                    ".episode"
+                ];
+
+                var episodes = [];
+                for (var selector of episodeSelectors) {
+                    var found = episodesList.select(selector);
+                    if (found.length > 0) {
+                        episodes = found;
+                        break;
+                    }
+                }
+
                 var showUncenEp = this.getPreference("animekai_show_uncen_epsiodes");
 
                 for (var item of episodes) {
