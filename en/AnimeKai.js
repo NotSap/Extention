@@ -38,117 +38,81 @@ class DefaultExtension extends MProvider {
     }
 
     async searchPage({ query = "", type = [], genre = [], status = [], sort = "", season = [], year = [], rating = [], country = [], language = [], page = 1 } = {}) {
-        function bundleSlug(category, items) {
-            var rd = "";
-            for (var item of items) {
-                rd += `&${category}[]=${encodeURIComponent(item.toLowerCase())}`;
-            }
-            return rd;
-        }
-
-        var slug = "/browser?";
-        if (query && query.trim() !== "") {
-            slug += "keyword=" + encodeURIComponent(query.trim());
-        }
-
-        if (type.length > 0) slug += bundleSlug("type", type);
-        if (genre.length > 0) slug += bundleSlug("genre", genre);
-        if (status.length > 0) slug += bundleSlug("status", status);
-        if (season.length > 0) slug += bundleSlug("season", season);
-        if (year.length > 0) slug += bundleSlug("year", year);
-        if (rating.length > 0) slug += bundleSlug("rating", rating);
-        if (country.length > 0) slug += bundleSlug("country", country);
-        if (language.length > 0) slug += bundleSlug("language", language);
+        // Build search URL with all parameters
+        var slug = "/filter?";
+        const params = new URLSearchParams();
         
-        sort = sort.length < 1 ? "updated_date" : sort;
-        slug += "&sort=" + sort;
-        slug += "&page=" + page;
+        if (query && query.trim() !== "") {
+            params.append("keyword", query.trim());
+        }
+
+        type.forEach(t => params.append("type[]", t));
+        genre.forEach(g => params.append("genre[]", g));
+        status.forEach(s => params.append("status[]", s));
+        season.forEach(s => params.append("season[]", s));
+        year.forEach(y => params.append("year[]", y));
+        rating.forEach(r => params.append("rating[]", r));
+        country.forEach(c => params.append("country[]", c));
+        language.forEach(l => params.append("language[]", l));
+        
+        params.append("sort", sort || "updated_date");
+        params.append("page", page);
+
+        slug += params.toString();
 
         var list = [];
         var body = await this.getPage(slug);
 
-        // Try multiple container selectors
-        var animeContainers = [
-            ".aitem-wrapper",
-            ".list-update",
-            ".anime-list",
-            ".items",
-            ".film-list",
-            ".list-items"
-        ];
-
-        var animeContainer = null;
-        for (var container of animeContainers) {
-            animeContainer = body.selectFirst(container);
-            if (animeContainer) break;
+        // More reliable anime item detection
+        var animeItems = body.select(".film-list > .film-item, .items > .item, .anime-list > .anime-item");
+        
+        if (animeItems.length === 0) {
+            // Alternative detection method
+            animeItems = body.select("div[class*='item'], div[class*='film'], div[class*='anime']");
         }
 
-        if (animeContainer) {
-            // Try multiple item selectors
-            var animeSelectors = [
-                ".aitem",
-                ".anime-item",
-                ".list-item",
-                ".item",
-                ".film-item",
-                ".list-item"
-            ];
+        var titlePref = this.getPreference("animekai_title_lang");
 
-            var animes = [];
-            for (var selector of animeSelectors) {
-                var found = animeContainer.select(selector);
-                if (found.length > 0) {
-                    animes = found;
-                    break;
+        animeItems.forEach(item => {
+            try {
+                var linkElement = item.selectFirst("a[href*='/watch/'], a[href*='/anime/']");
+                if (!linkElement) return;
+
+                var link = linkElement.getHref;
+                if (!link || !link.includes("/watch/") && !link.includes("/anime/")) return;
+
+                var imageElement = item.selectFirst("img[data-src], img[src]");
+                var imageUrl = imageElement?.attr("data-src") || imageElement?.getSrc || "";
+
+                var titleElement = item.selectFirst(".film-name, .name, .title");
+                var name = titlePref.includes("jp") ? 
+                    (titleElement?.attr(titlePref) || titleElement?.text) : 
+                    (titleElement?.text || "");
+
+                if (name && link) {
+                    list.push({ 
+                        name: name.trim(),
+                        link: link.startsWith("/") ? link : "/" + link,
+                        imageUrl 
+                    });
                 }
+            } catch (e) {
+                console.log("Error parsing anime item: " + e);
             }
+        });
 
-            animes.forEach(anime => {
-                try {
-                    // Try multiple link selectors
-                    var linkElement = anime.selectFirst("a");
-                    if (!linkElement) return;
-                    
-                    var link = linkElement.getHref;
-                    if (!link) return;
-                    
-                    // Try multiple image selectors
-                    var imageElement = anime.selectFirst("img");
-                    var imageUrl = imageElement?.attr("data-src") || 
-                                 imageElement?.getSrc || 
-                                 "";
-                    
-                    // Try multiple title selectors
-                    var titleElement = anime.selectFirst("a.title, .name, .title, .film-name");
-                    var name = titleElement?.text?.trim();
-                    if (!name) {
-                        name = titleElement?.attr("title") || 
-                              titleElement?.attr("data-title") || 
-                              "";
-                    }
-                    
-                    if (name && link) {
-                        list.push({ 
-                            name, 
-                            link, 
-                            imageUrl 
-                        });
-                    }
-                } catch (e) {
-                    console.log("Error parsing anime item: " + e);
-                }
-            });
-        }
-
-        // Check pagination
-        var paginations = body.select(".pagination > li, .pagination a, .page-links a");
+        // Improved pagination detection
+        var pagination = body.selectFirst(".pagination, .page-links");
         var hasNextPage = false;
         
-        if (paginations.length > 0) {
-            var lastPageItem = paginations[paginations.length - 1];
-            hasNextPage = !lastPageItem.className?.includes("active") && 
-                         !lastPageItem.className?.includes("disabled") &&
-                         lastPageItem.text?.toLowerCase().includes("next");
+        if (pagination) {
+            var lastPageItem = pagination.select("li, a").pop();
+            if (lastPageItem) {
+                hasNextPage = !lastPageItem.className?.includes("active") && 
+                             !lastPageItem.className?.includes("disabled") &&
+                             (lastPageItem.text?.toLowerCase().includes("next") || 
+                              lastPageItem.selectFirst("i[class*='next']"));
+            }
         }
 
         return { 
@@ -212,6 +176,8 @@ class DefaultExtension extends MProvider {
             page 
         });
     }
+
+}
 
     async getDetail(url) {
         function statusCode(status) {
