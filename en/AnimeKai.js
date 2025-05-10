@@ -218,8 +218,6 @@ class DefaultExtension extends MProvider {
         }
     }
 
-}
-
     getFilterList() {
         function formateState(type_name, items, values) {
             var state = [];
