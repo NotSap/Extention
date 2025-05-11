@@ -5,15 +5,17 @@ class KissKh extends MProvider {
   KissKh({required this.source});
 
   MSource source;
+
   final Client client = Client();
 
   @override
   Future<MPages> getPopular(int page) async {
-    final res = (await client.get(
-      Uri.parse(
-        "${source.baseUrl}/api/DramaList/List?page=$page&type=0&sub=0&country=0&status=0&order=1&pageSize=40",
-      ),
-    )).body;
+    final res =
+        (await client.get(
+          Uri.parse(
+            "${source.baseUrl}/api/DramaList/List?page=$page&type=0&sub=0&country=0&status=0&order=1&pageSize=40",
+          ),
+        )).body;
     final jsonRes = json.decode(res);
     final datas = jsonRes["data"];
     List<MManga> animeList = [];
@@ -34,11 +36,12 @@ class KissKh extends MProvider {
 
   @override
   Future<MPages> getLatestUpdates(int page) async {
-    final res = (await client.get(
-      Uri.parse(
-        "${source.baseUrl}/api/DramaList/List?page=$page&type=0&sub=0&country=0&status=0&order=12&pageSize=40",
-      ),
-    )).body;
+    final res =
+        (await client.get(
+          Uri.parse(
+            "${source.baseUrl}/api/DramaList/List?page=$page&type=0&sub=0&country=0&status=0&order=12&pageSize=40",
+          ),
+        )).body;
     final jsonRes = json.decode(res);
     final datas = jsonRes["data"];
 
@@ -60,9 +63,10 @@ class KissKh extends MProvider {
 
   @override
   Future<MPages> search(String query, int page, FilterList filterList) async {
-    final res = (await client.get(
-      Uri.parse("${source.baseUrl}/api/DramaList/Search?q=$query&type=0"),
-    )).body;
+    final res =
+        (await client.get(
+          Uri.parse("${source.baseUrl}/api/DramaList/Search?q=$query&type=0"),
+        )).body;
     final jsonRes = json.decode(res);
     List<MManga> animeList = [];
     for (var data in jsonRes) {
@@ -99,9 +103,7 @@ class KissKh extends MProvider {
 
     for (var a in episodes) {
       MChapter episode = MChapter();
-      String number = (a["number"] is int 
-          ? a["number"].toString() 
-          : (a["number"] as double).toString().replaceAll(".0", "));
+      String number = a["number"].toString().replaceAll(".0", "");
       final id = a["id"].toString();
       
       if (containsAnime || containsTVSeries) {
@@ -122,51 +124,41 @@ class KissKh extends MProvider {
 
   @override
   Future<List<MVideo>> getVideoList(String url) async {
-    try {
-      final res = (await client.get(Uri.parse(url))).body;
-      final id = substringAfter(substringBefore(url, ".png"), "Episode/");
-      final jsonRes = json.decode(res);
+    final res = (await client.get(Uri.parse(url))).body;
+    final id = substringAfter(substringBefore(url, ".png"), "Episode/");
+    final jsonRes = json.decode(res);
 
-      final subRes =
-          (await client.get(Uri.parse("${source.baseUrl}/api/Sub/$id"))).body;
-      var jsonSubRes = json.decode(subRes);
-      List<MTrack> subtitles = [];
+    final subRes =
+        (await client.get(Uri.parse("${source.baseUrl}/api/Sub/$id"))).body;
+    var jsonSubRes = json.decode(subRes);
+    List<MTrack> subtitles = [];
 
-      for (var sub in jsonSubRes) {
-        final subUrl = sub["src"] as String;
-        final label = sub["label"];
-        if (subUrl.endsWith("txt")) {
-          var subtitle = await getSubtitle(subUrl, label);
-          subtitles.add(subtitle);
-        } else {
-          var subtitle = MTrack();
-          subtitle
-            ..label = label
-            ..file = subUrl;
-          subtitles.add(subtitle);
-        }
+    for (var sub in jsonSubRes) {
+      final subUrl = sub["src"] as String;
+      final label = sub["label"];
+      if (subUrl.endsWith("txt")) {
+        var subtitle = await getSubtitle(subUrl, label);
+        subtitles.add(subtitle);
+      } else {
+        var subtitle = MTrack();
+        subtitle
+          ..label = label
+          ..file = subUrl;
+        subtitles.add(subtitle);
       }
-      
-      final videoUrl = jsonRes["Video"];
-      if (videoUrl == null || videoUrl.isEmpty) {
-        throw Exception("No video URL found");
-      }
-      
-      var video = MVideo();
-      video
-        ..url = videoUrl
-        ..originalUrl = videoUrl
-        ..quality = "kisskh"
-        ..subtitles = subtitles
-        ..headers = {
-          "referer": "https://kisskh.me/",
-          "origin": "https://kisskh.me",
-        };
-      return [video];
-    } catch (e) {
-      print("Error in getVideoList: $e");
-      return [];
     }
+    final videoUrl = jsonRes["Video"];
+    var video = MVideo();
+    video
+      ..url = videoUrl
+      ..originalUrl = videoUrl
+      ..quality = "kisskh"
+      ..subtitles = subtitles
+      ..headers = {
+        "referer": "https://kisskh.me/",
+        "origin": "https://kisskh.me",
+      };
+    return [video];
   }
 
   Future<MTrack> getSubtitle(String subUrl, String subLang) async {
@@ -188,10 +180,40 @@ class KissKh extends MProvider {
 
   String decrypt(String data) {
     final key = utf8.decode([
-      56,48,53,54,52,56,51,54,52,54,51,50,56,55,54,51,
+      56,
+      48,
+      53,
+      54,
+      52,
+      56,
+      51,
+      54,
+      52,
+      54,
+      51,
+      50,
+      56,
+      55,
+      54,
+      51,
     ]);
     final iv = utf8.decode([
-      54,56,53,50,54,49,50,51,55,48,49,56,53,50,55,51,
+      54,
+      56,
+      53,
+      50,
+      54,
+      49,
+      50,
+      51,
+      55,
+      48,
+      49,
+      56,
+      53,
+      50,
+      55,
+      51,
     ]);
     return cryptoHandler(data, iv, key, false);
   }
