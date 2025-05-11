@@ -84,10 +84,12 @@ class KissKh extends MProvider {
       
       if (response.body.isEmpty) return MPages([], false);
       
-      final jsonRes = (json.decode(response.body) as List?) ?? [];
-      List<MManga> animeList = [];
+      // Fix for search JSON parsing
+      final jsonRes = json.decode(response.body);
+      final items = jsonRes is List ? jsonRes : (jsonRes["data"] as List? ?? []);
       
-      for (var data in jsonRes) {
+      List<MManga> animeList = [];
+      for (var data in items) {
         try {
           var anime = MManga();
           anime.name = data["title"]?.toString() ?? "Unknown";
@@ -174,7 +176,7 @@ class KissKh extends MProvider {
       try {
         final subResponse = await client.get(Uri.parse("${source.baseUrl}/api/Sub/$id"));
         if (subResponse.body.isNotEmpty) {
-          var jsonSubRes = (json.decode(subResponse.body) as List?) ?? [];
+          var jsonSubRes = (json.decode(subResponse.body) as List? ?? [];
           for (var sub in jsonSubRes) {
             try {
               final subUrl = sub["src"]?.toString() ?? "";
